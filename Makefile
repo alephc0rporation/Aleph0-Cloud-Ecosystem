@@ -18,3 +18,7 @@ reset:
 .PHONY: test
 test:
 	cd api && go vet ./... && go test ./...
+
+.PHONY: generate
+generate:
+	cd api && go tool oapi-codegen -config oapi-codegen.yaml openapi.yaml
