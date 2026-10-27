@@ -18,11 +18,12 @@ reset:
 .PHONY: test
 test: web/node_modules
 	cd api && go vet ./... && go test ./...
-	cd web && npm run lint && npm run typecheck
+	cd web && npm run lint && npm run typecheck && npm test
 
 .PHONY: generate
-generate:
+generate: web/node_modules
 	cd api && go tool oapi-codegen -config oapi-codegen.yaml openapi.yaml
+	cd web && npm run generate
 
 .PHONY: dev-api
 dev-api:
@@ -36,3 +37,8 @@ web/node_modules: web/package-lock.json
 .PHONY: dev-web
 dev-web: web/node_modules
 	cd web && npm run dev
+
+.PHONY: dev
+# Ctrl+C stops both.
+dev: web/node_modules
+	$(MAKE) -j2 dev-api dev-web

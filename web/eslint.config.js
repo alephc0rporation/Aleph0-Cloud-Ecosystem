@@ -21,7 +21,8 @@ export default defineConfig([
   },
   {
     // File routes export `Route` next to their component; that is the router convention.
-    files: ['src/routes/**/*.tsx'],
+    // main.tsx is the entry point: it renders the app and defines App without being imported.
+    files: ['src/routes/**/*.tsx', 'src/main.tsx'],
     rules: { 'react-refresh/only-export-components': 'off' },
   },
 ])
