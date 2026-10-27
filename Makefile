@@ -14,3 +14,7 @@ down:
 reset:
 	docker compose down -v
 	$(MAKE) up
+
+.PHONY: test
+test:
+	cd api && go vet ./... && go test ./...
