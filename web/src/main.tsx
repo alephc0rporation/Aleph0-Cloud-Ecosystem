@@ -28,8 +28,8 @@ function App() {
   const auth = useAuth()
   // Wait for the stored session or the sign-in callback before any route decides.
   if (auth.isLoading) return null
-  // A failed callback would otherwise redirect to Keycloak and back in a loop.
-  if (auth.error) {
+  // A failed callback would otherwise redirect to Keycloak and back in a loop; a failed silent renewal is left to the fetcher's re-login.
+  if (auth.error && auth.error.source !== 'renewSilent') {
     return (
       <p role="alert" className="p-4 text-destructive">
         Sign-in failed: {auth.error.message}
