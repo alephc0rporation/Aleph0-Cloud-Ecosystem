@@ -10,7 +10,7 @@ export default defineConfig({
   // The router plugin must run before the React plugin.
   plugins: [tanstackRouter({ target: 'react', autoCodeSplitting: true }), react(), tailwindcss()],
   resolve: {
-    alias: { '@': path.resolve(__dirname, './src') },
+    alias: { '@': path.resolve(import.meta.dirname, './src') },
   },
   server: {
     port: 5173,
