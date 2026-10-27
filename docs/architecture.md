@@ -171,7 +171,7 @@ Folders are created by the issue that first needs them.
 
 ### Frontend stack
 
-React + Vite + TypeScript, TanStack Router, TanStack Query, Zod, shadcn/ui (Tailwind CSS + Radix).
+React + Vite + TypeScript, TanStack Router, TanStack Query, Zod, shadcn/ui (base-nova style: Tailwind CSS v4 + Base UI).
 Login: OIDC Authorization Code + PKCE against Keycloak (`oidc-client-ts`). Zustand is added when
 there is client-side UI state to share.
 
