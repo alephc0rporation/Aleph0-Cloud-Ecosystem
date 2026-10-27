@@ -95,7 +95,7 @@ Image tags are pinned to exact versions when implemented (PostgreSQL 18, Keycloa
 - Stores its data in the `keycloak` PostgreSQL database (same as production), starts after PostgreSQL is healthy
 - Bootstrap admin credentials come from `.env`
 
-**Ports** (with `networkingMode=mirrored`, all reachable from the Windows browser on `localhost`)
+**Ports** (with `networkingMode=mirrored`, all reachable from the Windows browser on `localhost`). Containers publish on `127.0.0.1` only, so the dev credentials never reach the local network.
 
 | Service | Port |
 |---|---|
@@ -184,8 +184,10 @@ Missing required variables stop the process at startup with one message listing 
 - **API client:** `orval` reads `../api/openapi.yaml` and writes TanStack Query hooks and Zod schemas into `src/api/gen/`
 - **Fetch wrapper** (`src/api/fetcher.ts`, the orval mutator):
   - adds `Authorization: Bearer <access token>`
-  - on `401`, starts `signinRedirect()`
-  - on any other non-2xx, throws an error carrying the problem details
+  - on `401` without a session or with an expired one, starts `signinRedirect()`
+  - on a `401` for a fresh token, throws instead: Keycloak still has a session, so a redirect would loop
+  - on any other non-2xx, throws an error carrying the problem details (type generated from the spec)
+- **Retries:** TanStack Query retries network errors and 5xx only, never 4xx
 - **Dev proxy:** Vite forwards `/v1/*` to `http://localhost:8080`
 - **Config:** Vite reads the root `.env` (`envDir: '..'`); only `VITE_OIDC_AUTHORITY` and `VITE_OIDC_CLIENT_ID` reach the browser
 - **UI:** shadcn/ui on Tailwind CSS; only `button` and `card` are added now
@@ -221,7 +223,7 @@ The Makefile loads `.env` when present and exports its variables.
 
 **Web** (Vitest):
 
-- Fetch wrapper: attaches the bearer token; a `401` triggers `signinRedirect`
+- Fetch wrapper: attaches the bearer token; a `401` without a session or with an expired one triggers `signinRedirect`; a `401` for a fresh token does not
 
 ## Documentation
 

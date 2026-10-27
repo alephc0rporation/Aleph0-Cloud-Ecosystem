@@ -294,7 +294,8 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env}
     ports:
-      - "5432:5432"
+      # Loopback only: the dev superuser password must not be reachable from the LAN.
+      - "127.0.0.1:5432:5432"
     volumes:
       # PostgreSQL 18 images keep data under /var/lib/postgresql/18/docker.
       - pgdata:/var/lib/postgresql
@@ -319,7 +320,7 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:?set it in .env}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?set it in .env}
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     volumes:
       - ./deploy/keycloak:/opt/keycloak/data/import:ro
     depends_on:
@@ -372,6 +373,13 @@ docker compose ps --format '{{.Service}} {{.Health}}'
 ```
 
 Expected: `keycloak healthy` and `postgres healthy`.
+
+```bash
+docker compose port postgres 5432
+docker compose port keycloak 8080
+```
+
+Expected: `127.0.0.1:5432` and `127.0.0.1:8081`, nothing on `0.0.0.0`.
 
 ```bash
 docker compose exec postgres psql -U postgres -Atc "select datname from pg_database where datname in ('api','keycloak') order by 1"
@@ -732,6 +740,12 @@ grep -nE 'type (StrictServerInterface|GetHealthz200JSONResponse|GetHealthz503JSO
 ```
 
 Expected: one line for each of the 8 names. If a name differs, use the generated name in Tasks 6 and 7.
+
+```bash
+grep -nE '^\s+(BaseRouter|ErrorHandlerFunc) ' api/internal/oapi/oapi.gen.go
+```
+
+Expected: at least one line for each field; Task 7 sets both on `StdHTTPServerOptions`.
 
 - [ ] **Step 5: Makefile target**
 
@@ -1367,9 +1381,12 @@ func TestMe(t *testing.T) {
 }
 
 func TestUnknownPathIsProblem404(t *testing.T) {
-	rec := do(t, server.Handler(&handlers.Handlers{Ping: pingOK}, allow), "/nope")
-	if rec.Code != http.StatusNotFound || rec.Header().Get("Content-Type") != "application/problem+json" {
-		t.Fatalf("status = %d, Content-Type = %q", rec.Code, rec.Header().Get("Content-Type"))
+	h := server.Handler(&handlers.Handlers{Ping: pingOK}, allow)
+	for _, path := range []string{"/nope", "/v1/does-not-exist"} {
+		rec := do(t, h, path)
+		if rec.Code != http.StatusNotFound || rec.Header().Get("Content-Type") != "application/problem+json" {
+			t.Errorf("%s: status = %d, Content-Type = %q", path, rec.Code, rec.Header().Get("Content-Type"))
+		}
 	}
 }
 
@@ -1532,6 +1549,12 @@ func Handler(api oapi.StrictServerInterface, requireAuth func(http.Handler) http
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
 		problem.Write(w, http.StatusBadRequest, err.Error())
 	}
+	// The generated routes are added to base, so unknown paths and methods
+	// get a problem+json 404 instead of net/http's plain-text answers.
+	base := http.NewServeMux()
+	base.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		problem.Write(w, http.StatusNotFound, "")
+	})
 	generated := oapi.HandlerWithOptions(
 		oapi.NewStrictHandlerWithOptions(api, nil, oapi.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc: badRequest,
@@ -1540,15 +1563,12 @@ func Handler(api oapi.StrictServerInterface, requireAuth func(http.Handler) http
 				problem.Write(w, http.StatusInternalServerError, "")
 			},
 		}),
-		oapi.StdHTTPServerOptions{ErrorHandlerFunc: badRequest},
+		oapi.StdHTTPServerOptions{BaseRouter: base, ErrorHandlerFunc: badRequest},
 	)
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /healthz", generated)
 	mux.Handle("/v1/", requireAuth(generated))
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		problem.Write(w, http.StatusNotFound, "")
-	})
+	mux.Handle("/", generated)
 	return requestID(accessLog(recoverPanic(mux)))
 }
 
@@ -1688,14 +1708,18 @@ Expected: builds.
 
 - [ ] **Step 4: Verify usage and config errors**
 
+Use a built binary: `go run` exits with 1 whenever the program fails, which hides the real exit code.
+
 ```bash
 cd api
-go run ./cmd/api; echo "exit=$?"
-env -i PATH="$PATH" HOME="$HOME" go run ./cmd/api serve; echo "exit=$?"
+go build -o /tmp/aleph0-api ./cmd/api
+/tmp/aleph0-api; echo "exit=$?"
+env -i /tmp/aleph0-api serve; echo "exit=$?"
+rm /tmp/aleph0-api
 cd ..
 ```
 
-Expected: first prints `usage: api serve` and `exit=2` (`go run` reports `exit status 2`); second logs `missing required environment variables: DATABASE_URL, OIDC_ISSUER, OIDC_AUDIENCE` and exits with 1.
+Expected: first prints `usage: api serve` and `exit=2`; second logs `missing required environment variables: DATABASE_URL, OIDC_ISSUER, OIDC_AUDIENCE` and prints `exit=1`.
 
 - [ ] **Step 5: Verify against the running stack**
 
@@ -2054,12 +2078,25 @@ it('sends no Authorization header without a session', async () => {
   expect(new Headers(fetchMock.mock.calls[0][1].headers).has('Authorization')).toBe(false)
 })
 
-it('starts the login redirect on 401', async () => {
-  vi.mocked(userManager.getUser).mockResolvedValue(null)
+it.each([
+  ['no session', null],
+  ['an expired session', { access_token: 'old', expired: true }],
+])('starts the login redirect on 401 with %s', async (_, user) => {
+  vi.mocked(userManager.getUser).mockResolvedValue(user as never)
   fetchMock.mockResolvedValue(new Response(null, { status: 401 }))
 
   await expect(apiFetch('/v1/me')).rejects.toBeInstanceOf(ApiError)
   expect(userManager.signinRedirect).toHaveBeenCalledOnce()
+})
+
+// Keycloak still has a session, so a redirect would come straight back and loop forever.
+it('does not redirect when the API rejects a fresh token', async () => {
+  vi.mocked(userManager.getUser).mockResolvedValue({ access_token: 'tok', expired: false } as never)
+  fetchMock.mockResolvedValue(new Response(null, { status: 401 }))
+
+  const err = await apiFetch('/v1/me').catch((e: unknown) => e)
+  expect((err as ApiError).status).toBe(401)
+  expect(userManager.signinRedirect).not.toHaveBeenCalled()
 })
 
 it('throws the problem details on other errors', async () => {
@@ -2086,9 +2123,7 @@ Create `web/src/api/fetcher.ts`:
 
 ```ts
 import { userManager } from '@/auth/oidc'
-
-// RFC 9457 problem details, as returned by the API.
-type Problem = { type?: string; title?: string; status?: number; detail?: string }
+import type { Problem } from './gen/api'
 
 export class ApiError extends Error {
   readonly status: number
@@ -2101,15 +2136,17 @@ export class ApiError extends Error {
   }
 }
 
-// Mutator used by the orval-generated client: adds the access token, sends the user to
-// Keycloak on 401, and turns other non-2xx responses into ApiError.
+// Mutator used by the orval-generated client: adds the access token and turns
+// non-2xx responses into ApiError.
 export async function apiFetch<T>(url: string, init: RequestInit = {}): Promise<T> {
   const user = await userManager.getUser()
   const headers = new Headers(init.headers)
   if (user?.access_token) headers.set('Authorization', `Bearer ${user.access_token}`)
 
   const res = await fetch(url, { ...init, headers })
-  if (res.status === 401) {
+  // Log in again only without a usable session. A 401 for a fresh token means the API rejects
+  // it (wrong aud or iss), and a redirect would bounce through Keycloak forever.
+  if (res.status === 401 && (!user || user.expired)) {
     await userManager.signinRedirect()
     throw new ApiError(401)
   }
@@ -2120,10 +2157,12 @@ export async function apiFetch<T>(url: string, init: RequestInit = {}): Promise<
 }
 ```
 
+`./gen/api` is generated in Step 7. Vitest strips type-only imports, so the tests already pass; `tsc` needs Step 7.
+
 - [ ] **Step 6: Run the tests**
 
 Run: `npm test`
-Expected: 4 tests PASS.
+Expected: 6 tests PASS.
 
 - [ ] **Step 7: Generate the API client**
 
@@ -2205,11 +2244,19 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { AuthProvider, useAuth } from 'react-oidc-context'
+import { ApiError } from '@/api/fetcher'
 import { onSigninCallback, userManager } from '@/auth/oidc'
 import { routeTree } from './routeTree.gen'
 import './index.css'
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // A 4xx answer does not change on retry; only network errors and 5xx are retried.
+      retry: (failures, err) => !(err instanceof ApiError && err.status < 500) && failures < 3,
+    },
+  },
+})
 const router = createRouter({ routeTree, context: { auth: undefined! } })
 
 declare module '@tanstack/react-router' {
@@ -2322,7 +2369,7 @@ npm run lint && npm run typecheck && npm test
 cd ..
 ```
 
-Expected: no lint or type errors, 4 tests PASS.
+Expected: no lint or type errors, 6 tests PASS.
 
 - [ ] **Step 12: Makefile**
 
@@ -2459,20 +2506,29 @@ TanStack Query hook in `web/src/api/gen/`. Never edit generated files by hand.
   as `access token rejected`.
 ````
 
-- [ ] **Step 2: Full acceptance run from a clean checkout**
+- [ ] **Step 2: Commit**
 
 ```bash
-cd /tmp && rm -rf accept && git clone ~/projects/Aleph0-Cloud-Ecosystem accept && cd accept
-git switch feat/3-app-skeleton
-cp .env.example .env
-make reset
-make test
-make generate && git status --porcelain
+git add README.md
+git commit -m "docs: add README with setup, commands and troubleshooting"
 ```
 
-Expected: `make test` passes; `git status --porcelain` prints nothing. Note: `git clone` of a local path copies committed work only, so commit Step 1 first or run this check after Step 4.
+- [ ] **Step 3: Clean-checkout check**
 
-Then from `~/projects/Aleph0-Cloud-Ecosystem` run `make dev` and repeat the browser checks from Task 10 Step 13, plus:
+A clone holds only committed files, so nothing installed or generated locally can hide a gap. No containers are needed: the tests use fakes.
+
+```bash
+rm -rf /tmp/accept && git clone ~/projects/Aleph0-Cloud-Ecosystem /tmp/accept && cd /tmp/accept
+make test
+make generate && git status --porcelain
+cd ~/projects/Aleph0-Cloud-Ecosystem && rm -rf /tmp/accept
+```
+
+Expected: `make test` passes; `git status --porcelain` prints nothing.
+
+- [ ] **Step 4: Acceptance run**
+
+From `~/projects/Aleph0-Cloud-Ecosystem`: `make up && make dev`, then repeat the browser checks from Task 10 Step 13. In a second terminal:
 
 ```bash
 curl -si localhost:8080/v1/me | head -5
@@ -2483,13 +2539,6 @@ Expected: `401` with `application/problem+json`; `{"status":"ok"}` then `503`.
 
 After logging out, reload `http://localhost:5173`: Expected: Keycloak asks for the password again.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Hand off**
 
-```bash
-git add README.md
-git commit -m "docs: add README with setup, commands and troubleshooting"
-```
-
-- [ ] **Step 4: Hand off**
-
-Rerun the clean-checkout check from Step 2 if it ran before this commit. Then ask the user before pushing the branch and opening a pull request that closes #3.
+Ask the user before pushing the branch and opening a pull request that closes #3.
