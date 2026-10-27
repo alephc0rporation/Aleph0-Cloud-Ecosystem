@@ -16,8 +16,9 @@ reset:
 	$(MAKE) up
 
 .PHONY: test
-test:
+test: web/node_modules
 	cd api && go vet ./... && go test ./...
+	cd web && npm run lint && npm run typecheck
 
 .PHONY: generate
 generate:
@@ -26,3 +27,12 @@ generate:
 .PHONY: dev-api
 dev-api:
 	cd api && go run ./cmd/api serve
+
+# Reinstall when the lock file changes.
+web/node_modules: web/package-lock.json
+	cd web && npm ci
+	@touch $@
+
+.PHONY: dev-web
+dev-web: web/node_modules
+	cd web && npm run dev
