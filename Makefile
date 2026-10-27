@@ -22,3 +22,7 @@ test:
 .PHONY: generate
 generate:
 	cd api && go tool oapi-codegen -config oapi-codegen.yaml openapi.yaml
+
+.PHONY: dev-api
+dev-api:
+	cd api && go run ./cmd/api serve
