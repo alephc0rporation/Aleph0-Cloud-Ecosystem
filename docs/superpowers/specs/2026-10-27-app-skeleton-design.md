@@ -52,6 +52,7 @@ Generated code (Go and TypeScript) is committed, so `go build` and `npm run dev`
 │       ├── config/               # env vars -> struct, validated at startup
 │       ├── server/               # http.Server, mux, middleware
 │       ├── auth/                 # Keycloak JWT verification
+│       ├── problem/              # RFC 9457 error responses, shared by auth, server and handlers
 │       ├── oapi/                 # generated, never edited by hand
 │       └── handlers/             # implements oapi.StrictServerInterface
 ├── web/
