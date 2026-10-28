@@ -1,4 +1,4 @@
-# Aleph0 Cloud
+# Aleph0 Cloud Ecosystem
 
 Our own cloud platform on OpenStack: a web portal and a public API in front of VMs, storage,
 networks and load balancers. See [docs/architecture.md](docs/architecture.md).
