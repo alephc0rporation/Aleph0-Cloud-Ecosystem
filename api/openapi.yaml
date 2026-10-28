@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: Aleph0 Cloud API
+  title: Aleph0 Cloud Ecosystem API
   version: 0.1.0
 security:
   - bearerAuth: []
