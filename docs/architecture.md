@@ -60,6 +60,8 @@ The API is a product: customers use it directly, not only through the portal.
 
 - **Spec-first:** `api/openapi.yaml` is the contract. Go server code (`oapi-codegen`) and the
   frontend client (`orval`: TanStack Query hooks + Zod schemas) are generated from it.
+- Requests to routes in the spec are validated against it (`nethttp-middleware`, using the
+  embedded spec) before a handler runs; violations return a 400 problem response.
 - Errors use RFC 9457 problem details (`application/problem+json`).
 - Every endpoint under `/v1/` requires a Keycloak access token whose `aud` contains `api`.
 

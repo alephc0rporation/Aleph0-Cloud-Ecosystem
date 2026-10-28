@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -13,7 +14,12 @@ import (
 
 // Handler builds the root handler. Everything under /v1/ goes through requireAuth,
 // so a new /v1 endpoint is protected unless it is deliberately mounted elsewhere.
+// It panics if the embedded OpenAPI spec cannot be loaded, which only a broken build causes.
 func Handler(api oapi.StrictServerInterface, requireAuth func(http.Handler) http.Handler) http.Handler {
+	spec, err := oapi.GetSwagger()
+	if err != nil {
+		panic(fmt.Sprintf("load embedded OpenAPI spec: %v", err))
+	}
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
 		problem.Write(w, http.StatusBadRequest, err.Error())
 	}
@@ -31,7 +37,12 @@ func Handler(api oapi.StrictServerInterface, requireAuth func(http.Handler) http
 				problem.Write(w, http.StatusInternalServerError, "")
 			},
 		}),
-		oapi.StdHTTPServerOptions{BaseRouter: base, ErrorHandlerFunc: badRequest},
+		// Validation runs only on routes in the spec; anything else falls through to base's 404.
+		oapi.StdHTTPServerOptions{
+			BaseRouter:       base,
+			Middlewares:      []oapi.MiddlewareFunc{validateRequests(spec)},
+			ErrorHandlerFunc: badRequest,
+		},
 	)
 
 	mux := http.NewServeMux()
