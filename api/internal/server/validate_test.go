@@ -89,3 +89,53 @@ func TestValidateRequests(t *testing.T) {
 		})
 	}
 }
+
+func TestLimitBody(t *testing.T) {
+	spec, err := openapi3.NewLoader().LoadFromData([]byte(testSpec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var called bool
+	h := limitBody(16)(validateRequests(spec)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	big := `{"name":"` + strings.Repeat("x", 100) + `"}`
+
+	tests := []struct {
+		name, body    string
+		contentLength int64
+		want          int
+	}{
+		{"under the limit", `{"name":"x"}`, -1, http.StatusNoContent},
+		{"Content-Length over the limit", big, int64(len(big)), http.StatusRequestEntityTooLarge},
+		// Unknown length (chunked): the limit trips while the validator reads the body.
+		{"unknown length over the limit", big, -1, http.StatusRequestEntityTooLarge},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called = false
+			req := httptest.NewRequest(http.MethodPost, "/v1/things", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.ContentLength = tt.contentLength
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d; body %s", rec.Code, tt.want, rec.Body)
+			}
+			if tt.want == http.StatusNoContent {
+				return
+			}
+			if called {
+				t.Fatal("handler ran for an oversized body")
+			}
+			if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+				t.Fatalf("Content-Type = %q", ct)
+			}
+			if !strings.Contains(rec.Body.String(), "larger than 16 bytes") {
+				t.Fatalf("body = %s", rec.Body)
+			}
+		})
+	}
+}

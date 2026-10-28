@@ -24,6 +24,9 @@ func validateRequests(spec *openapi3.T) func(http.Handler) http.Handler {
 		},
 		DoNotValidateServers: true,
 		ErrorHandlerWithOpts: func(ctx context.Context, err error, w http.ResponseWriter, r *http.Request, opts nethttpmiddleware.ErrorHandlerOpts) {
+			if writeTooLarge(w, err) {
+				return
+			}
 			if opts.StatusCode >= http.StatusInternalServerError {
 				slog.ErrorContext(ctx, "request validation failed", "error", err)
 				problem.Write(w, opts.StatusCode, "")

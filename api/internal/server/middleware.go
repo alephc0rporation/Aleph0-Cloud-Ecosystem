@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -85,4 +87,36 @@ func recoverPanic(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r)
 	})
+}
+
+// maxBodyBytes caps request bodies: the validator and handlers read them into memory.
+const maxBodyBytes = 1 << 20
+
+// limitBody rejects a body over n bytes up front when Content-Length announces it,
+// and otherwise makes reads fail with *http.MaxBytesError once n is passed.
+func limitBody(n int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.ContentLength > n {
+				problem.Write(w, http.StatusRequestEntityTooLarge, tooLargeDetail(n))
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, n)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// writeTooLarge answers 413 and returns true if err comes from a body over limitBody's cap.
+func writeTooLarge(w http.ResponseWriter, err error) bool {
+	var maxErr *http.MaxBytesError
+	if !errors.As(err, &maxErr) {
+		return false
+	}
+	problem.Write(w, http.StatusRequestEntityTooLarge, tooLargeDetail(maxErr.Limit))
+	return true
+}
+
+func tooLargeDetail(n int64) string {
+	return fmt.Sprintf("request body is larger than %d bytes", n)
 }
