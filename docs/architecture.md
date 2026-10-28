@@ -1,4 +1,4 @@
-# Aleph0 Cloud — architecture (MVP)
+# Aleph0 Cloud Ecosystem — architecture (MVP)
 
 Our own cloud platform built on **OpenStack**, with a custom portal and API.
 Customers never talk to OpenStack directly: they only use our portal and our API.
