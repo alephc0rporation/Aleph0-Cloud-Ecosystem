@@ -16,12 +16,12 @@ reset:
 	$(MAKE) up
 
 .PHONY: test
-test: web/node_modules
+test: web/node_modules/.package-lock.json
 	cd api && go vet ./... && go test ./...
 	cd web && npm run lint && npm run typecheck && npm test
 
 .PHONY: generate
-generate: web/node_modules
+generate: web/node_modules/.package-lock.json
 	cd api && go tool oapi-codegen -config oapi-codegen.yaml openapi.yaml
 	cd web && npm run generate
 
@@ -29,15 +29,16 @@ generate: web/node_modules
 dev-api:
 	cd api && go run ./cmd/api serve
 
-# Reinstall when the lock file changes.
-web/node_modules: web/package-lock.json
+# Reinstall when the lock file changes. npm writes this marker only after a successful
+# install, so a failed or interrupted one runs again.
+web/node_modules/.package-lock.json: web/package-lock.json
 	cd web && npm ci
 
 .PHONY: dev-web
-dev-web: web/node_modules
+dev-web: web/node_modules/.package-lock.json
 	cd web && npm run dev
 
 .PHONY: dev
 # Ctrl+C stops both.
-dev: web/node_modules
+dev: web/node_modules/.package-lock.json
 	$(MAKE) -j2 dev-api dev-web

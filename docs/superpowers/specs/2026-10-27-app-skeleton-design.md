@@ -208,7 +208,7 @@ The Makefile loads `.env` when present and exports its variables.
 | `make down` | `docker compose down` |
 | `make reset` | `docker compose down -v`, then `make up` (fresh DB, realm re-imported) |
 
-`web/node_modules` is a Make target that depends on `web/package-lock.json` and runs `npm ci`, so dependencies install on first use and again when the lock file changes.
+`web/node_modules/.package-lock.json` (written by npm only after a successful install) is a Make target that depends on `web/package-lock.json` and runs `npm ci`, so dependencies install on first use, again when the lock file changes, and again after a failed install.
 
 ## Testing
 
