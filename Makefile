@@ -32,7 +32,6 @@ dev-api:
 # Reinstall when the lock file changes.
 web/node_modules: web/package-lock.json
 	cd web && npm ci
-	@touch $@
 
 .PHONY: dev-web
 dev-web: web/node_modules
