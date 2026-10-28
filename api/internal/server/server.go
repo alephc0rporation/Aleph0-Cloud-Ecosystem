@@ -21,6 +21,9 @@ func Handler(api oapi.StrictServerInterface, requireAuth func(http.Handler) http
 		panic(fmt.Sprintf("load embedded OpenAPI spec: %v", err))
 	}
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
+		if writeTooLarge(w, err) {
+			return
+		}
 		problem.Write(w, http.StatusBadRequest, err.Error())
 	}
 	// The generated routes are added to base, so unknown paths and methods
@@ -48,7 +51,7 @@ func Handler(api oapi.StrictServerInterface, requireAuth func(http.Handler) http
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", requireAuth(generated))
 	mux.Handle("/", generated)
-	return requestID(accessLog(recoverPanic(mux)))
+	return requestID(accessLog(recoverPanic(limitBody(maxBodyBytes)(mux))))
 }
 
 // Run serves h on addr until ctx is cancelled, then gives in-flight requests 10 s to finish.
