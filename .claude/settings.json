@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "extraKnownMarketplaces": {
+    "ponytail": {
+      "source": { "source": "github", "repo": "DietrichGebert/ponytail" }
+    },
+    "taste-skill": {
+      "source": { "source": "github", "repo": "leonxlnx/taste-skill" }
+    },
+    "google-plugins": {
+      "source": { "source": "github", "repo": "google/skills" }
+    },
+    "samber": {
+      "source": { "source": "github", "repo": "samber/cc" }
+    }
+  },
+  "enabledPlugins": {
+    "gopls-lsp@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "stripe@claude-plugins-official": true,
+    "terraform@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "42crunch-api-security-testing@claude-plugins-official": true,
+    "sentry@claude-plugins-official": true,
+    "taste-skill@taste-skill": true,
+    "ponytail@ponytail": true,
+    "google-cloud-developer@google-plugins": true,
+    "cc-skills-golang@samber": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(make test)",
+      "Bash(make generate)",
+      "Bash(make up)",
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(go build *)",
+      "Bash(go tool oapi-codegen *)",
+      "Bash(go mod tidy)",
+      "Bash(gofmt *)",
+      "Bash(npm run lint)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run test)",
+      "Bash(npm test)",
+      "Bash(npm run build)",
+      "Bash(npm run generate)",
+      "Bash(npx vitest run *)",
+      "Bash(npx tsc *)",
+      "Bash(npx eslint *)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(curl -s localhost:8080/*)",
+      "Bash(curl -i localhost:8080/*)"
+    ],
+    "ask": [
+      "Bash(make reset)",
+      "Bash(docker compose down *)",
+      "Bash(docker volume rm *)",
+      "Bash(git push *)",
+      "Bash(npm install *)",
+      "Bash(go get *)"
+    ],
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.local)",
+      "Read(**/.env.*.local)",
+      "Read(**/.env.production)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/*.keyring)",
+      "Read(~/.42crunch/**)",
+      "Edit(**/.env)",
+      "Bash(cat .env)",
+      "Bash(cat */.env)",
+      "Edit(**/internal/oapi/oapi.gen.go)",
+      "Edit(**/src/api/gen/**)",
+      "Edit(**/src/routeTree.gen.ts)"
+    ]
+  }
+}
