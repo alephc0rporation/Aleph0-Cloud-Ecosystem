@@ -12,13 +12,14 @@ differs.
 | Node OS | Ubuntu 24.04 (Noble) cloud image | the only Ubuntu release Kolla-Ansible 2026.2 supports |
 | Kolla-Ansible | `stable/2026.2`, installed from git into the venv | latest stable; `kolla_base_distro: ubuntu` to match the hosts |
 | Ansible | `ansible-core` 2.20–2.21 (Kolla's pin), host `python3` (3.14) | that range supports Python 3.12–3.14 on the controller |
-| Ceph | Tentacle 20.2.4: image `quay.io/ceph/ceph:v20.2.4`, cephadm from `download.ceph.com/rpm-20.2.4` | latest stable; Noble's archive still ships Squid's cephadm |
+| Ceph | Tentacle 20.2.0: image `quay.io/ceph/ceph:v20.2.0`, cephadm from `download.ceph.com/rpm-20.2.0` | matches the Ceph client libraries in Kolla's 2026.2 images; 20.2.4 monitors require the `aes256k` cephx cipher those clients cannot read. Upgrade Ceph together with Kolla's images |
 | Terraform | 1.17.1, provider `dmacvicar/libvirt` 0.9.9 (`.terraform.lock.hcl` committed) | already chosen in `docs/architecture.md` |
 | `openstack.cloud` collection | 2.6.0 | the OpenStack init playbook |
 
 The deploy machine is WSL (`Ubuntu-26.04`), where `make` runs. Kolla's `deployment` group is
-`localhost`. Kolla's images carry their own Ceph client libraries; Ceph clients talk to newer
-clusters, so a Tentacle cluster serves them.
+`localhost`. Kolla's images carry their own Ceph client libraries (20.2.0), so the Ceph cluster is
+pinned to that release. Dev uses Kolla's quay.io test images (`kolla_test_images: "yes"` in the dev
+`globals.yml`); production builds its own images.
 
 ## Layout
 

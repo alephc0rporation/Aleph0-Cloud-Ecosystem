@@ -21,15 +21,22 @@
   become: true
   tasks:
     # get_url asks the server on every run, and download.ceph.com resets connections now and then.
+    # A versioned file plus a link, so a new ceph_version replaces the binary (get_url keeps an existing file).
     - name: Download cephadm
       ansible.builtin.get_url:
         url: "https://download.ceph.com/rpm-{{ ceph_version }}/el9/noarch/cephadm"
-        dest: /usr/local/bin/cephadm
+        dest: "/usr/local/bin/cephadm-{{ ceph_version }}"
         mode: "0755"
       register: cephadm_download
       retries: 5
       delay: 10
       until: cephadm_download is succeeded
+
+    - name: Link cephadm to that version
+      ansible.builtin.file:
+        src: "/usr/local/bin/cephadm-{{ ceph_version }}"
+        dest: /usr/local/bin/cephadm
+        state: link
 
 - name: Bootstrap Ceph on the first controller
   hosts: role_control[0]
