@@ -154,3 +154,6 @@ deploy/terraform/.terraform/
 deploy/terraform/terraform.tfstate.d/
 deploy/kolla/*/*
 !deploy/kolla/*/globals.yml
+
+# Claude Superpowers
+docs/superpowers/plans
