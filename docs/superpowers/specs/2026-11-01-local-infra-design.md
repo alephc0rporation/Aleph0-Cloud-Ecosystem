@@ -254,7 +254,7 @@ These targets run in WSL only (bash, libvirt).
 ## Host prerequisites (documented, installed once by hand)
 
 `.wslconfig` with `memory=24GB`; nested virtualization (`/sys/module/kvm_*/parameters/nested`
-= `Y`); packages `qemu-kvm libvirt-daemon-system python3-venv unzip`; the user in the `libvirt`
+= `Y`); packages `qemu-system-x86 qemu-utils libvirt-daemon-system python3-venv unzip`; the user in the `libvirt`
 and `kvm` groups; Terraform 1.17.1 in `/usr/local/bin`; an SSH key at `~/.ssh/id_ed25519`.
 
 ## Testing

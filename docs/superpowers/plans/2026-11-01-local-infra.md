@@ -49,7 +49,7 @@ Expected: the latest commit of `feat/2-local-infra`.
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y qemu-kvm libvirt-daemon-system python3-venv unzip
+sudo apt-get install -y qemu-system-x86 qemu-utils libvirt-daemon-system python3-venv unzip
 sudo usermod -aG libvirt,kvm "$USER"
 curl -fsSLo /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.17.1/terraform_1.17.1_linux_amd64.zip
 sudo unzip -o /tmp/terraform.zip terraform -d /usr/local/bin
@@ -1749,7 +1749,7 @@ OpenStack + Ceph on a set of nodes described by a node file. Everything here run
   (`cat /sys/module/kvm_intel/parameters/nested` or `kvm_amd` prints `Y`)
 - Packages and groups:
   ```bash
-  sudo apt-get install -y qemu-kvm libvirt-daemon-system python3-venv unzip
+  sudo apt-get install -y qemu-system-x86 qemu-utils libvirt-daemon-system python3-venv unzip
   sudo usermod -aG libvirt,kvm "$USER"    # then restart WSL
   ```
 - Terraform 1.17.1 in `/usr/local/bin` (from releases.hashicorp.com)
