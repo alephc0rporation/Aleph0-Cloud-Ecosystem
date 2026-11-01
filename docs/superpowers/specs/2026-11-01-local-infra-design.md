@@ -99,7 +99,8 @@ all:
   `all.vars` would be silently ignored. `globals.yml` maps ours onto Kolla's
   (`network_interface: "{{ if_mgmt }}"`, …), and any of them can be overridden per host.
 - node1 gets 10 GB, not 8: Kolla's all-in-one minimum is 8 GB before Ceph's mon, mgr, OSD and
-  RGW. The default file uses 18 GB of the 24 GB WSL budget.
+  RGW. The default file uses 18 GB of the 24 GB WSL budget. Dev runs one worker per OpenStack
+  service and a 2 GB swap file on VM nodes, so node1 fits in 10 GB.
 
 Every Ansible and Kolla command gets three inventories, in this order:
 `-i deploy/nodes/<env>.yml -i deploy/nodes/roles.yml -i deploy/kolla/services.ini`.

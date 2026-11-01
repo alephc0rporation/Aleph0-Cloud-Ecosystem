@@ -28,6 +28,10 @@ enable_octavia: "no"         # with the load balancer step
 enable_ceph_rgw: "no"        # Ceph runs RGW; Keystone/HAProxy integration comes with the S3 step
 enable_fluentd: "no"         # saves memory in dev
 
+# Dev runs one worker per service to fit node1 in 10 GB (Kolla's default is the vCPU count).
+openstack_service_workers: "1"
+openstack_service_rpc_workers: "1"
+
 # Prebuilt images exist only in quay.io/openstack.kolla, which prechecks rejects unless told they are
 # for testing (same as --use-test-images). Fine for dev; production needs its own registry.
 kolla_test_images: "yes"
