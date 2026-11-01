@@ -9,7 +9,7 @@ env=${2:-dev}
 nodes=nodes/$env.yml
 cluster_dir=$PWD/kolla/$env
 if [[ $cmd != test && ! -f $nodes ]]; then echo "no such node file: deploy/$nodes" >&2; exit 2; fi
-mkdir -p "$cluster_dir"
+mkdir -p "$cluster_dir" && chmod 700 "$cluster_dir"   # holds keyrings, passwords and credentials
 
 export PATH=$PWD/.venv/bin:$PATH
 if [[ $env == dev ]]; then
