@@ -51,3 +51,10 @@ deploy/.venv/.done: deploy/requirements.txt deploy/requirements.yml
 	PATH="$(CURDIR)/deploy/.venv/bin:$$PATH" deploy/.venv/bin/kolla-ansible install-deps
 	deploy/.venv/bin/ansible-galaxy collection install -r deploy/requirements.yml
 	touch $@
+
+# Infrastructure (WSL only). ENV picks deploy/nodes/$(ENV).yml.
+ENV ?= dev
+
+.PHONY: infra-test
+infra-test: deploy/.venv/.done
+	deploy/infra.sh test $(ENV)

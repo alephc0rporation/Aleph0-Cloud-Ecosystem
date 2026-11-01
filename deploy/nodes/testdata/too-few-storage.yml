@@ -1,0 +1,12 @@
+all:
+  vars:
+    ceph_pool_size: 2
+  hosts:
+    node1:
+      ansible_host: 10.10.0.11
+      storage_ip: 10.20.0.11
+      node_roles: [control, network, compute, storage]
+    node2:
+      ansible_host: 10.10.0.12
+      storage_ip: 10.20.0.12
+      node_roles: [compute]

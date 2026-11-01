@@ -1,0 +1,5 @@
+# Turns each node's node_roles into role_* groups (role_control, role_network, ...).
+plugin: ansible.builtin.constructed
+keyed_groups:
+  - key: node_roles
+    prefix: role

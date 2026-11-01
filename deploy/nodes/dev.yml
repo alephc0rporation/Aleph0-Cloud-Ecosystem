@@ -1,0 +1,28 @@
+# The dev cluster. Edit this file to add nodes or roles, then run `make infra-apply`.
+# Roles: control (odd count), network, compute, storage. A `vm:` block makes it a libvirt VM.
+all:
+  vars:
+    ansible_user: ubuntu
+    vip_address: 10.10.0.10            # internal API VIP
+    if_mgmt: eth0                      # management, API, tenant overlay (Geneve)
+    if_storage: eth1                   # Ceph public network
+    if_external: eth2                  # no IP; Neutron provider network for floating IPs
+    ceph_pool_size: 3
+    ceph_devices: [/dev/vdb]
+    ceph_osd_memory_target: 1610612736 # dev only: 1.5 GB per OSD
+  hosts:
+    node1:
+      ansible_host: 10.10.0.11
+      storage_ip: 10.20.0.11
+      node_roles: [control, network, compute, storage]
+      vm: { vcpus: 4, memory_gb: 10, ceph_disk_gb: 50 }
+    node2:
+      ansible_host: 10.10.0.12
+      storage_ip: 10.20.0.12
+      node_roles: [compute, storage]
+      vm: { vcpus: 4, memory_gb: 4, ceph_disk_gb: 50 }
+    node3:
+      ansible_host: 10.10.0.13
+      storage_ip: 10.20.0.13
+      node_roles: [compute, storage]
+      vm: { vcpus: 4, memory_gb: 4, ceph_disk_gb: 50 }
