@@ -147,3 +147,10 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Deploy: toolchain, Terraform state and generated cluster files
+deploy/.venv/
+deploy/terraform/.terraform/
+deploy/terraform/terraform.tfstate.d/
+deploy/kolla/*/*
+!deploy/kolla/*/globals.yml

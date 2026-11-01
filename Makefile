@@ -42,3 +42,12 @@ dev-web: web/node_modules/.package-lock.json
 # Ctrl+C stops both.
 dev: web/node_modules/.package-lock.json
 	$(MAKE) -j2 dev-api dev-web
+
+# Deploy toolchain (WSL only). The marker is written last, so a failed install runs again.
+deploy/.venv/.done: deploy/requirements.txt deploy/requirements.yml
+	python3 -m venv deploy/.venv
+	deploy/.venv/bin/pip install --upgrade pip
+	deploy/.venv/bin/pip install -r deploy/requirements.txt
+	PATH="$(CURDIR)/deploy/.venv/bin:$$PATH" deploy/.venv/bin/kolla-ansible install-deps
+	deploy/.venv/bin/ansible-galaxy collection install -r deploy/requirements.yml
+	touch $@
