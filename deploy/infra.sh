@@ -54,6 +54,7 @@ apply() {
     passwords
     ka bootstrap-servers --limit "$limit"
   fi
+  play ceph.yml   # every run, so ceph_pool_size and spec changes apply even when no node changed
 }
 
 destroy() {

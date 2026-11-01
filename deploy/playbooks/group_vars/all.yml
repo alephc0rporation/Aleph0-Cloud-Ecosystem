@@ -1,0 +1,2 @@
+ceph_version: "20.2.4"
+ceph_image: "quay.io/ceph/ceph:v{{ ceph_version }}"
