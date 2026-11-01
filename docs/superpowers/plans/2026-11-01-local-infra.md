@@ -240,14 +240,25 @@ mkdir -p "$cluster_dir"
 
 export PATH=$PWD/.venv/bin:$PATH
 
+# Each bad fixture must be rejected by its own rule: <fixture>:<text of that rule's message>.
 run_tests() {
   ansible-playbook -i nodes/testdata/valid.yml -i nodes/roles.yml playbooks/validate.yml
-  for f in two-controllers no-network too-few-storage unknown-role; do
-    if ansible-playbook -i "nodes/testdata/$f.yml" -i nodes/roles.yml playbooks/validate.yml >/dev/null 2>&1; then
+  local t f msg out
+  for t in "two-controllers:use 1, 3 or 5" \
+           "no-network:no node has the network role" \
+           "too-few-storage:storage hosts for ceph_pool_size" \
+           "unknown-role:needs ansible_host, storage_ip and node_roles"; do
+    f=${t%%:*} msg=${t#*:}
+    if out=$(ansible-playbook -i "nodes/testdata/$f.yml" -i nodes/roles.yml playbooks/validate.yml 2>&1); then
       echo "FAIL: nodes/testdata/$f.yml passed validation" >&2
       exit 1
     fi
-    echo "ok: nodes/testdata/$f.yml rejected"
+    if ! grep -qF "$msg" <<<"$out"; then
+      echo "FAIL: nodes/testdata/$f.yml was rejected for another reason:" >&2
+      echo "$out" >&2
+      exit 1
+    fi
+    echo "ok: nodes/testdata/$f.yml rejected ($msg)"
   done
 }
 
@@ -335,10 +346,11 @@ Expected: FAIL, `ansible-playbook` reports that `playbooks/validate.yml` could n
           delegate_to: localhost
           register: clouds
 
-        - name: Hosts Nova knows
-          ansible.builtin.command: openstack compute service list --service nova-compute -f value -c Host
+        # Every compute and network node runs an OVN agent; every controller is a Ceph host.
+        - name: Hosts Neutron knows
+          ansible.builtin.command: openstack network agent list -f value -c Host
           delegate_to: localhost
-          register: nova_hosts
+          register: agent_hosts
           changed_when: false
           when: clouds.stat.exists
 
@@ -357,14 +369,14 @@ Expected: FAIL, `ansible-playbook` reports that `playbooks/validate.yml` could n
               {{ orphans | join(', ') }}: still part of the cluster: run
               make node-remove ENV={{ cluster_env }} NODE=<name>, or put it back in the file
           vars:
-            orphans: "{{ (nova_hosts.stdout_lines + (ceph_hosts.stdout | from_json | map(attribute='hostname') | list)) | unique | difference(nodes) }}"
+            orphans: "{{ (agent_hosts.stdout_lines + (ceph_hosts.stdout | from_json | map(attribute='hostname') | list)) | unique | difference(nodes) }}"
           when: clouds.stat.exists
 ```
 
 - [ ] **Step 7: Run the tests and watch them pass**
 
 Run: `make infra-test`
-Expected: the valid fixture's play ends with `failed=0`, then four lines `ok: nodes/testdata/<name>.yml rejected`, exit code 0.
+Expected: the valid fixture's play ends with `failed=0`, then four lines `ok: nodes/testdata/<name>.yml rejected (<rule text>)`, exit code 0.
 
 - [ ] **Step 8: Write the default dev node file `deploy/nodes/dev.yml`**
 
@@ -457,16 +469,16 @@ locals {
   gib       = 1024 * 1024 * 1024
 
   networks = {
-    mgmt    = { mac = 0x10, prefix = "10.10.0", nat = true }
-    storage = { mac = 0x20, prefix = "10.20.0", nat = false }
-    ext     = { mac = 0x30, prefix = "10.30.0", nat = true }
+    mgmt    = { mac = "10", prefix = "10.10.0", nat = true }
+    storage = { mac = "20", prefix = "10.20.0", nat = false }
+    ext     = { mac = "30", prefix = "10.30.0", nat = true }
   }
   nic_order = ["mgmt", "storage", "ext"]
 
   # 52:54:00:<net>:00:<last octet of ansible_host>, matched by cloud-init to name the NICs.
   macs = {
     for name, n in local.vms : name => {
-      for net, v in local.networks : net => format("52:54:00:%02x:00:%02x", v.mac, tonumber(split(".", n.ansible_host)[3]))
+      for net, v in local.networks : net => format("52:54:00:%s:00:%02x", v.mac, tonumber(split(".", n.ansible_host)[3]))
     }
   }
 }
@@ -684,14 +696,25 @@ destroy() {
   find "$cluster_dir" -mindepth 1 -maxdepth 1 ! -name globals.yml -exec rm -rf {} +
 }
 
+# Each bad fixture must be rejected by its own rule: <fixture>:<text of that rule's message>.
 run_tests() {
   ansible-playbook -i nodes/testdata/valid.yml -i nodes/roles.yml playbooks/validate.yml
-  for f in two-controllers no-network too-few-storage unknown-role; do
-    if ansible-playbook -i "nodes/testdata/$f.yml" -i nodes/roles.yml playbooks/validate.yml >/dev/null 2>&1; then
+  local t f msg out
+  for t in "two-controllers:use 1, 3 or 5" \
+           "no-network:no node has the network role" \
+           "too-few-storage:storage hosts for ceph_pool_size" \
+           "unknown-role:needs ansible_host, storage_ip and node_roles"; do
+    f=${t%%:*} msg=${t#*:}
+    if out=$(ansible-playbook -i "nodes/testdata/$f.yml" -i nodes/roles.yml playbooks/validate.yml 2>&1); then
       echo "FAIL: nodes/testdata/$f.yml passed validation" >&2
       exit 1
     fi
-    echo "ok: nodes/testdata/$f.yml rejected"
+    if ! grep -qF "$msg" <<<"$out"; then
+      echo "FAIL: nodes/testdata/$f.yml was rejected for another reason:" >&2
+      echo "$out" >&2
+      exit 1
+    fi
+    echo "ok: nodes/testdata/$f.yml rejected ($msg)"
   done
   tf init -backend=false -input=false >/dev/null
   tf validate
@@ -1180,16 +1203,17 @@ done
       become: false
 ```
 
-- [ ] **Step 5: Run Ceph from `apply`**
+- [ ] **Step 5: Run Ceph from `apply`, on every run**
 
-In `deploy/infra.sh`, inside `apply`, add `play ceph.yml` after `ka bootstrap-servers --limit "$limit"`:
+In `deploy/infra.sh`, add `play ceph.yml` after the `if [[ -n $PENDING ]]` block, so the end of `apply` reads:
 
 ```bash
   if [[ -n $PENDING ]]; then
     passwords
     ka bootstrap-servers --limit "$limit"
-    play ceph.yml
   fi
+  play ceph.yml   # every run, so ceph_pool_size and spec changes apply even when no node changed
+}
 ```
 
 - [ ] **Step 6: Run it**
@@ -1239,13 +1263,10 @@ export OS_CLIENT_CONFIG_FILE=$cluster_dir/clouds.yaml OS_CLOUD=kolla-admin
 
 - [ ] **Step 2: Add the Kolla steps and markers to `apply`**
 
-Replace the `if [[ -n $PENDING ]]; then … fi` block in `apply` with:
+After `play ceph.yml` in `apply`, add:
 
 ```bash
   if [[ -n $PENDING ]]; then
-    passwords
-    ka bootstrap-servers --limit "$limit"
-    play ceph.yml
     ka prechecks --limit "$limit"
     ka pull --limit "$limit"
     if [[ $PENDING_CONTROL == yes ]]; then
@@ -1281,7 +1302,7 @@ Expected: every URL on `10.10.0.10`; `nova-compute` up on node1–node3; OVN con
 - [ ] **Step 5: Rerun: nothing pending**
 
 Run: `make infra-apply && cat deploy/kolla/dev/pending.env`
-Expected: finishes in a few minutes without running Kolla; `PENDING=` (empty), `PENDING_CONTROL=no`.
+Expected: finishes in a few minutes; Ceph re-applies, Kolla does not run; `PENDING=` (empty), `PENDING_CONTROL=no`.
 
 - [ ] **Step 6: Commit**
 
@@ -1300,7 +1321,7 @@ git commit -m "feat(deploy): deploy OpenStack with Kolla-Ansible on pending node
 
 **Interfaces:**
 - Consumes: `clouds.yaml`, `OS_CLOUD` env (Task 6).
-- Produces: network `public` (flat, `physnet1`, subnet 10.30.0.0/24, pool .100–.199); flavors `s.tiny`, `s.small`; image `cirros`; project `dev` with `dev-net` (192.168.100.0/24) and `dev-router`; users `aleph0-api` (`member` on `dev`), `emergency-admin` (`admin` on `admin`); passwords in `deploy/kolla/<env>/credentials/<user>`.
+- Produces: network `public` (flat, `physnet1`, subnet 10.30.0.0/24, pool .100–.199); flavors `s.tiny`, `s.small`; image `cirros`; project `dev` with `dev-net` (192.168.100.0/24) and `dev-router`; user `aleph0-api` (`member` on `dev`), password in `deploy/kolla/<env>/credentials/aleph0-api`. Kolla's own `admin` (local, not federated) is the emergency admin.
 
 - [ ] **Step 1: Check the module options for this collection version**
 
@@ -1322,7 +1343,6 @@ Expected: the option names. If any option used in Step 2 is missing for its modu
     cirros_version: "0.6.3"
     cirros_file: "{{ cluster_dir }}/cirros-{{ cirros_version }}-x86_64-disk.img"
     api_password: "{{ lookup('ansible.builtin.password', cluster_dir ~ '/credentials/aleph0-api length=32 chars=ascii_letters,digits') }}"
-    emergency_password: "{{ lookup('ansible.builtin.password', cluster_dir ~ '/credentials/emergency-admin length=32 chars=ascii_letters,digits') }}"
   tasks:
     - name: External network for floating IPs
       openstack.cloud.network:
@@ -1383,20 +1403,6 @@ Expected: the option names. If any option used in Step 2 is missing for its modu
         user: aleph0-api
         role: member
         project: dev
-
-    - name: Local emergency admin
-      openstack.cloud.identity_user:
-        name: emergency-admin
-        password: "{{ emergency_password }}"
-        domain: default
-        default_project: admin
-        update_password: on_create
-
-    - name: Emergency admin has admin on admin
-      openstack.cloud.role_assignment:
-        user: emergency-admin
-        role: admin
-        project: admin
 
     - name: Dev private network
       openstack.cloud.network:
@@ -1792,16 +1798,18 @@ running). Controllers go from 1 to 3 in one apply.
 
 - Compute/storage: move the servers off it, run `make node-remove NODE=<name>`, then delete its
   entry from the node file. Deleting the entry first makes `infra-apply` refuse to run.
-- Control or network (manual, for now):
-  1. Network: move routers off the node's gateway chassis
-     (`openstack router list`, then let OVN reschedule by removing the chassis in step 3).
-  2. `deploy/.venv/bin/kolla-ansible stop -i deploy/nodes/dev.yml -i deploy/nodes/roles.yml -i deploy/kolla/services.ini --configdir $PWD/deploy/kolla/dev --passwords $PWD/deploy/kolla/dev/passwords.yml --yes-i-really-really-mean-it --limit <node>`
-  3. Delete its network agents and compute service as in `deploy/playbooks/node-remove.yml`.
-  4. Controller: remove it from Galera and RabbitMQ by redeploying the rest
-     (`kolla-ansible deploy` with the node gone from the file), keeping an odd count.
-  5. Ceph: `ceph orch host drain <node>`, wait for `ceph orch ps <node>` to be empty,
-     `ceph orch host rm <node>`.
-  6. Delete `/etc/aleph0/roles` on the node and its entry from the node file.
+- Control or network (manual, for now; Kolla's "Removing existing controllers" order). Keep
+  an odd number of controllers, and remove one at a time. With
+  `KA="deploy/.venv/bin/kolla-ansible -i deploy/nodes/dev.yml -i deploy/nodes/roles.yml -i deploy/kolla/services.ini --configdir $PWD/deploy/kolla/dev --passwords $PWD/deploy/kolla/dev/passwords.yml"`:
+  1. Stop its services: `$KA stop --yes-i-really-really-mean-it --limit <node>`.
+  2. Delete its entry from the node file.
+  3. Controller: `$KA deploy --limit control`, so MariaDB and RabbitMQ drop the old member.
+     Network: OVN moves the routers' gateways to the remaining network nodes.
+  4. Check the cluster: `openstack compute service list`, `openstack network agent list`.
+  5. Delete its network agents and compute service, as in `deploy/playbooks/node-remove.yml`.
+  6. If it is a Ceph host: `ceph orch host drain <node>`, wait until `ceph orch ps <node>` lists
+     no daemons, then `ceph orch host rm <node>`.
+  7. Delete `/etc/aleph0/roles` on the node.
 
 ## Reaching OpenStack from WSL
 
@@ -1811,8 +1819,9 @@ deploy/.venv/bin/openstack server list --all-projects
 ```
 
 The APIs are on the VIP `10.10.0.10`. The backend's user is `aleph0-api` (`member` on project
-`dev`), password in `deploy/kolla/dev/credentials/aleph0-api`; `emergency-admin` is the local
-break-glass admin. Floating IPs (10.30.0.100–199) answer from WSL.
+`dev`), password in `deploy/kolla/dev/credentials/aleph0-api`. Kolla's `admin` is the local
+emergency admin (not federated), password `keystone_admin_password` in
+`deploy/kolla/dev/passwords.yml`. Floating IPs (10.30.0.100–199) answer from WSL.
 
 ## Generated files
 
@@ -1913,8 +1922,8 @@ Make these replacements (exact old text → new text):
    ### 6.2 Initial OpenStack setup
 
    Created by `make infra-apply`: external network `public` with floating IPs, flavors `s.tiny`
-   and `s.small`, CirrOS, project `dev` with a network and router, the backend service user
-   `aleph0-api` (`member` on `dev`) and the local emergency admin `emergency-admin`.
+   and `s.small`, CirrOS, project `dev` with a network and router, and the backend service user
+   `aleph0-api` (`member` on `dev`). Kolla's `admin` is the local emergency admin (not federated).
    Later: Ubuntu and Debian images, default per-project quotas.
    ````
 

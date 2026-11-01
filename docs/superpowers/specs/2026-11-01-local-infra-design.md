@@ -154,8 +154,9 @@ Ceph belongs on the controllers. The `role_` prefix keeps the two apart.
 - At least one `network` node and one `compute` node.
 - Storage hosts ≥ `ceph_pool_size`.
 - **Orphan check**, once a cluster exists (`deploy/kolla/<env>/clouds.yaml` is present): any
-  host that `ceph orch host ls` or `openstack compute service list` knows and the file does not
-  stops the run: "nodeX: still part of the cluster: run `make node-remove ENV=<env>
+  host that `ceph orch host ls` or `openstack network agent list` knows and the file does not
+  stops the run (every compute and network node runs an OVN agent; every controller is a Ceph
+  host): "nodeX: still part of the cluster: run `make node-remove ENV=<env>
   NODE=nodeX`, or put it back in the file."
 
 The internal API address is the dedicated VIP with HAProxy + keepalived from day one
@@ -176,10 +177,11 @@ and adds roles:
 4. **Pending** (`playbooks/pending.yml`): a node is pending when its `/etc/aleph0/roles` marker
    is missing or lists different roles than the file. Writes `deploy/kolla/<env>/pending.env`
    with `PENDING=<comma-separated nodes>` and `PENDING_CONTROL=yes|no`. When `PENDING` is
-   empty, steps 5–7 and 9 are skipped; step 8 still runs.
+   empty, steps 5, 7 and 9 are skipped; steps 6 and 8 still run, so changes to
+   `ceph_pool_size` and the Ceph specs apply without a node change.
 5. **Docker**: `kolla-ansible bootstrap-servers --limit <pending>`; when `PENDING_CONTROL=yes`
    the limit also includes `role_control`, as Kolla requires when controllers are added.
-6. **Ceph** (`playbooks/ceph.yml`):
+6. **Ceph** (`playbooks/ceph.yml`, every run):
    - install cephadm on the controllers; first run: `cephadm bootstrap --mon-ip <first
      controller's storage_ip> --ssh-user <ansible_user> --skip-monitoring-stack
      --skip-dashboard`;
@@ -201,8 +203,9 @@ and adds roles:
    .100–.199, no DHCP; flavors `s.tiny` (1 vCPU, 256 MB, 1 GB) and `s.small` (1, 1 GB, 10 GB);
    public image `cirros` (0.6.3); project `dev` with network `dev-net`, subnet
    192.168.100.0/24 and router `dev-router` to `public`; ICMP and SSH allowed in `dev`'s
-   default security group; user `aleph0-api` with `member` on `dev`; user `emergency-admin`
-   with `admin` on `admin`. Passwords are generated into `deploy/kolla/<env>/credentials/`.
+   default security group; user `aleph0-api` with `member` on `dev`, password generated into
+   `deploy/kolla/<env>/credentials/`. Kolla's own `admin` (local, not federated, password in
+   `passwords.yml`) is the emergency admin; no second admin account.
 9. **Markers** (`playbooks/markers.yml`): write `/etc/aleph0/roles` on the pending nodes.
 
 Kolla runs from `deploy/.venv`, a Make target built from `deploy/requirements.txt` and
