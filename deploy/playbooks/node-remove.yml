@@ -1,0 +1,115 @@
+# Takes a compute and/or storage node out of the cluster. infra.sh runs tag `check`, then
+# `kolla-ansible stop` on the node, then tag `cleanup`. Extra var: node=<name>.
+- name: Check that the node can go, and stop scheduling on it
+  hosts: localhost
+  gather_facts: false
+  tags: [check]
+  vars:
+    removing: "{{ hostvars[node].node_roles | default([]) }}"
+    computes_left: "{{ groups['role_compute'] | default([]) | difference([node]) }}"
+    storage_left: "{{ groups['role_storage'] | default([]) | difference([node]) }}"
+  tasks:
+    - name: The node is in the file and has only compute/storage roles
+      ansible.builtin.assert:
+        that:
+          - node in groups['all']
+          - removing | length > 0
+          - removing | difference(['compute', 'storage']) | length == 0
+        fail_msg: "{{ node }}: not in the node file, or has control/network roles (see deploy/README.md to remove those by hand)"
+
+    - name: Another compute node remains
+      ansible.builtin.assert:
+        that: computes_left | length > 0
+        fail_msg: "{{ node }} is the last compute node"
+      when: "'compute' in removing"
+
+    - name: Enough storage hosts remain for ceph_pool_size
+      ansible.builtin.assert:
+        that: storage_left | length >= ceph_pool_size | int
+        fail_msg: "only {{ storage_left | length }} storage hosts would remain for ceph_pool_size {{ ceph_pool_size }}; lower ceph_pool_size first"
+      when: "'storage' in removing"
+
+    - name: Read Ceph health
+      ansible.builtin.command: cephadm shell -- ceph health
+      delegate_to: "{{ groups['role_control'][0] }}"
+      become: true
+      register: health
+      changed_when: false
+
+    - name: Ceph is healthy
+      ansible.builtin.assert:
+        that: health.stdout is search('^HEALTH_OK')
+        fail_msg: "Ceph is not HEALTH_OK: {{ health.stdout }}"
+
+    - name: Compute
+      when: "'compute' in removing"
+      block:
+        - name: Stop scheduling new servers on the node
+          ansible.builtin.command: openstack compute service set --disable {{ node }} nova-compute
+          changed_when: true
+
+        - name: List servers still on the node
+          ansible.builtin.command: openstack server list --all-projects --host {{ node }} -f value -c ID
+          register: servers
+          changed_when: false
+
+        - name: No servers are left on the node
+          ansible.builtin.assert:
+            that: servers.stdout_lines | length == 0
+            fail_msg: |
+              {{ node }} still runs servers and stays disabled. Move them, then rerun make node-remove:
+              openstack server list --all-projects --host {{ node }} -f value -c ID | xargs -r -n1 openstack server migrate --live-migration --wait
+
+- name: Remove the node from OpenStack and Ceph
+  hosts: localhost
+  gather_facts: false
+  tags: [cleanup]
+  vars:
+    removing: "{{ hostvars[node].node_roles }}"
+  tasks:
+    - name: Compute
+      when: "'compute' in removing"
+      block:
+        - name: Delete the node's network agents
+          ansible.builtin.shell:
+            cmd: set -o pipefail; openstack network agent list --host {{ node }} -f value -c ID | xargs -r -n1 openstack network agent delete
+            executable: /bin/bash
+          changed_when: true
+
+        - name: Delete the node's compute service
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail;
+              openstack compute service list --os-compute-api-version 2.53 --host {{ node }} -f value -c ID
+              | xargs -r -n1 openstack compute service delete --os-compute-api-version 2.53
+            executable: /bin/bash
+          changed_when: true
+
+    - name: Storage
+      when: "'storage' in removing"
+      delegate_to: "{{ groups['role_control'][0] }}"
+      become: true
+      block:
+        - name: Drain the node's Ceph daemons and data
+          ansible.builtin.command: cephadm shell -- ceph orch host drain {{ node }}
+          changed_when: true
+
+        - name: Wait until no Ceph daemons are left on the node
+          ansible.builtin.command: cephadm shell -- ceph orch ps {{ node }} -f json
+          register: daemons
+          changed_when: false
+          retries: 90
+          delay: 20
+          until: daemons.stdout is search('No daemons') or (daemons.stdout | from_json | length == 0)
+
+        - name: Remove the node from Ceph
+          ansible.builtin.command: cephadm shell -- ceph orch host rm {{ node }}
+          changed_when: true
+
+    - name: Delete the node's marker
+      ansible.builtin.file:
+        path: /etc/aleph0/roles
+        state: absent
+      delegate_to: "{{ node }}"
+      become: true
+      ignore_unreachable: true

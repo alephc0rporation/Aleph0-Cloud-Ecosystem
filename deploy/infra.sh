@@ -74,6 +74,23 @@ apply() {
   fi
 }
 
+remove() {
+  local node=${1:?usage: infra.sh remove <env> <node>}
+  play node-remove.yml --tags check -e "node=$node"
+  ka stop --yes-i-really-really-mean-it --ignore-missing --limit "$node"
+  play node-remove.yml --tags cleanup -e "node=$node"
+  if has_vms; then
+    tf workspace select "$env"
+    tf destroy -input=false -auto-approve -var "nodes_file=$PWD/$nodes" \
+      -target="libvirt_domain.node[\"$node\"]" \
+      -target="libvirt_volume.system[\"$node\"]" \
+      -target="libvirt_volume.ceph[\"$node\"]" \
+      -target="libvirt_volume.init[\"$node\"]" \
+      -target="libvirt_cloudinit_disk.init[\"$node\"]"
+  fi
+  echo "Remove $node from deploy/nodes/$env.yml."
+}
+
 destroy() {
   if [[ $env != dev ]]; then
     echo "infra-destroy only runs for dev" >&2
@@ -112,6 +129,7 @@ run_tests() {
 
 case $cmd in
   apply) apply ;;
+  remove) remove "${3:-}" ;;
   destroy) destroy ;;
   test) run_tests ;;
   *) echo "unknown command: $cmd" >&2; exit 2 ;;

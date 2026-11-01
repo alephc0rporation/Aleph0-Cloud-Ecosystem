@@ -65,3 +65,7 @@ infra-apply: deploy/.venv/.done
 
 infra-destroy:
 	deploy/infra.sh destroy $(ENV)
+
+.PHONY: node-remove
+node-remove: deploy/.venv/.done
+	deploy/infra.sh remove $(ENV) $(NODE)
