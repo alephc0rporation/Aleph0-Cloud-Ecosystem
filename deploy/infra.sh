@@ -12,6 +12,41 @@ if [[ $cmd != test && ! -f $nodes ]]; then echo "no such node file: deploy/$node
 mkdir -p "$cluster_dir"
 
 export PATH=$PWD/.venv/bin:$PATH
+if [[ $env == dev ]]; then
+  # Dev VMs are recreated with the same addresses, so their host keys change.
+  export ANSIBLE_HOST_KEY_CHECKING=False
+  export ANSIBLE_SSH_ARGS="-o ControlMaster=auto -o ControlPersist=60s -o UserKnownHostsFile=/dev/null"
+fi
+
+inv=(-i "$nodes" -i nodes/roles.yml)
+
+play() { ansible-playbook "${inv[@]}" -e "cluster_env=$env cluster_dir=$cluster_dir" "playbooks/$1" "${@:2}"; }
+tf() { (cd terraform && terraform "$@"); }
+has_vms() { grep -q '^ *vm:' "$nodes"; }
+
+machines() {
+  has_vms || return 0
+  tf init -input=false >/dev/null
+  tf workspace select -or-create "$env"
+  tf apply -input=false -auto-approve -var "nodes_file=$PWD/$nodes"
+}
+
+apply() {
+  play validate.yml
+  machines
+  play hosts.yml
+}
+
+destroy() {
+  if [[ $env != dev ]]; then
+    echo "infra-destroy only runs for dev" >&2
+    exit 1
+  fi
+  tf init -input=false >/dev/null
+  tf workspace select -or-create dev
+  tf destroy -input=false -auto-approve -var "nodes_file=$PWD/$nodes"
+  find "$cluster_dir" -mindepth 1 -maxdepth 1 ! -name globals.yml -exec rm -rf {} +
+}
 
 # Each bad fixture must be rejected by its own rule: <fixture>:<text of that rule's message>.
 run_tests() {
@@ -34,9 +69,13 @@ run_tests() {
     fi
     echo "ok: nodes/testdata/$f.yml rejected ($msg)"
   done
+  tf init -backend=false -input=false >/dev/null
+  tf validate
 }
 
 case $cmd in
+  apply) apply ;;
+  destroy) destroy ;;
   test) run_tests ;;
   *) echo "unknown command: $cmd" >&2; exit 2 ;;
 esac

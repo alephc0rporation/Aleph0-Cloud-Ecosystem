@@ -58,3 +58,10 @@ ENV ?= dev
 .PHONY: infra-test
 infra-test: deploy/.venv/.done
 	deploy/infra.sh test $(ENV)
+
+.PHONY: infra-apply infra-destroy
+infra-apply: deploy/.venv/.done
+	deploy/infra.sh apply $(ENV)
+
+infra-destroy:
+	deploy/infra.sh destroy $(ENV)
