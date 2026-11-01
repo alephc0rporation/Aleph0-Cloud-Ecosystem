@@ -1,0 +1,30 @@
+# A node is pending when its marker (/etc/aleph0/roles, written by markers.yml after a
+# successful deploy) is missing or lists other roles than the node file.
+- name: Read the markers
+  hosts: all:!localhost
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Read /etc/aleph0/roles
+      ansible.builtin.slurp:
+        src: /etc/aleph0/roles
+      register: marker
+      failed_when: false
+
+    - name: Compare with the node file
+      ansible.builtin.set_fact:
+        pending: "{{ marker.content is not defined or (marker.content | b64decode | from_json) != (node_roles | sort) }}"
+
+- name: Write pending.env
+  hosts: localhost
+  gather_facts: false
+  vars:
+    pending_nodes: "{{ groups['all'] | difference(['localhost']) | map('extract', hostvars) | selectattr('pending') | map(attribute='inventory_hostname') | sort }}"
+  tasks:
+    - name: Write the pending list
+      ansible.builtin.copy:
+        dest: "{{ cluster_dir }}/pending.env"
+        mode: "0644"
+        content: |
+          PENDING={{ pending_nodes | join(',') }}
+          PENDING_CONTROL={{ 'yes' if pending_nodes | intersect(groups['role_control']) else 'no' }}

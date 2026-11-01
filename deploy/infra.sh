@@ -18,11 +18,19 @@ if [[ $env == dev ]]; then
   export ANSIBLE_SSH_ARGS="-o ControlMaster=auto -o ControlPersist=60s -o UserKnownHostsFile=/dev/null"
 fi
 
-inv=(-i "$nodes" -i nodes/roles.yml)
+inv=(-i "$nodes" -i nodes/roles.yml -i kolla/services.ini)
 
 play() { ansible-playbook "${inv[@]}" -e "cluster_env=$env cluster_dir=$cluster_dir" "playbooks/$1" "${@:2}"; }
 tf() { (cd terraform && terraform "$@"); }
 has_vms() { grep -q '^ *vm:' "$nodes"; }
+ka() { kolla-ansible "$1" "${inv[@]}" --configdir "$cluster_dir" --passwords "$cluster_dir/passwords.yml" "${@:2}"; }
+
+passwords() {
+  if [[ ! -f $cluster_dir/passwords.yml ]]; then
+    cp .venv/share/kolla-ansible/etc_examples/kolla/passwords.yml "$cluster_dir/passwords.yml"
+    kolla-genpwd -p "$cluster_dir/passwords.yml"
+  fi
+}
 
 machines() {
   has_vms || return 0
@@ -35,6 +43,17 @@ apply() {
   play validate.yml
   machines
   play hosts.yml
+  play pending.yml
+  # shellcheck source=/dev/null
+  source "$cluster_dir/pending.env"
+  limit=$PENDING
+  if [[ $PENDING_CONTROL == yes ]]; then
+    limit+=,role_control   # Kolla wants every controller in the limit when one is added
+  fi
+  if [[ -n $PENDING ]]; then
+    passwords
+    ka bootstrap-servers --limit "$limit"
+  fi
 }
 
 destroy() {
