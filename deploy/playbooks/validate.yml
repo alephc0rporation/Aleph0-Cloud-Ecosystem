@@ -1,5 +1,14 @@
 # Checks the node file before anything changes. With cluster_dir/clouds.yaml present (a
 # cluster exists), also refuses nodes that were deleted from the file without node-remove.
+- name: The node file lists nodes
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: At least one node
+      ansible.builtin.assert:
+        that: groups['all'] | difference(['localhost']) | length > 0
+        fail_msg: "the node file lists no nodes"
+
 - name: Validate the node file
   hosts: all:!localhost
   gather_facts: false

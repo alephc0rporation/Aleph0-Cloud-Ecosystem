@@ -262,7 +262,7 @@ and `kvm` groups; Terraform 1.17.1 in `/usr/local/bin`; an SSH key at `~/.ssh/id
 `make infra-test`, no cluster needed:
 
 - `ansible-playbook playbooks/validate.yml` against `nodes/testdata/valid.yml` passes, and
-  against `two-controllers.yml`, `no-network.yml`, `too-few-storage.yml`, `unknown-role.yml`
+  against `two-controllers.yml`, `no-network.yml`, `too-few-storage.yml`, `unknown-role.yml`, `empty.yml`
   fails. The orphan check is skipped because no `clouds.yaml` is passed.
 - `terraform validate`.
 

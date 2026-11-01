@@ -136,7 +136,7 @@ git commit -m "build(deploy): add the Ansible and Kolla-Ansible toolchain (#2)" 
 
 **Files:**
 - Create: `deploy/nodes/dev.yml`, `deploy/nodes/roles.yml`, `deploy/playbooks/validate.yml`, `deploy/infra.sh`
-- Create: `deploy/nodes/testdata/{valid,two-controllers,no-network,too-few-storage,unknown-role}.yml`
+- Create: `deploy/nodes/testdata/{valid,two-controllers,no-network,too-few-storage,unknown-role,empty}.yml`
 - Modify: `Makefile` (append)
 
 **Interfaces:**
@@ -213,6 +213,12 @@ all:
       node_roles: [control, network, compute, storage, gpu]
 ```
 
+`deploy/nodes/testdata/empty.yml`:
+```yaml
+all:
+  hosts: {}
+```
+
 - [ ] **Step 2: Write `deploy/nodes/roles.yml`**
 
 ```yaml
@@ -236,6 +242,7 @@ cmd=${1:?usage: infra.sh apply|remove|destroy|test <env> [node]}
 env=${2:-dev}
 nodes=nodes/$env.yml
 cluster_dir=$PWD/kolla/$env
+if [[ $cmd != test && ! -f $nodes ]]; then echo "no such node file: deploy/$nodes" >&2; exit 2; fi
 mkdir -p "$cluster_dir"
 
 export PATH=$PWD/.venv/bin:$PATH
@@ -246,8 +253,9 @@ run_tests() {
   local t f msg out
   for t in "two-controllers:use 1, 3 or 5" \
            "no-network:no node has the network role" \
-           "too-few-storage:storage hosts for ceph_pool_size" \
-           "unknown-role:needs ansible_host, storage_ip and node_roles"; do
+           "too-few-storage:1 storage hosts for ceph_pool_size 2" \
+           "unknown-role:needs ansible_host, storage_ip and node_roles" \
+           "empty:the node file lists no nodes"; do
     f=${t%%:*} msg=${t#*:}
     if out=$(ansible-playbook -i "nodes/testdata/$f.yml" -i nodes/roles.yml playbooks/validate.yml 2>&1); then
       echo "FAIL: nodes/testdata/$f.yml passed validation" >&2
@@ -295,6 +303,15 @@ Expected: FAIL, `ansible-playbook` reports that `playbooks/validate.yml` could n
 ```yaml
 # Checks the node file before anything changes. With cluster_dir/clouds.yaml present (a
 # cluster exists), also refuses nodes that were deleted from the file without node-remove.
+- name: The node file lists nodes
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: At least one node
+      ansible.builtin.assert:
+        that: groups['all'] | difference(['localhost']) | length > 0
+        fail_msg: "the node file lists no nodes"
+
 - name: Validate the node file
   hosts: all:!localhost
   gather_facts: false
@@ -376,7 +393,7 @@ Expected: FAIL, `ansible-playbook` reports that `playbooks/validate.yml` could n
 - [ ] **Step 7: Run the tests and watch them pass**
 
 Run: `make infra-test`
-Expected: the valid fixture's play ends with `failed=0`, then four lines `ok: nodes/testdata/<name>.yml rejected (<rule text>)`, exit code 0.
+Expected: the valid fixture's play ends with `failed=0`, then five lines `ok: nodes/testdata/<name>.yml rejected (<rule text>)`, exit code 0.
 
 - [ ] **Step 8: Write the default dev node file `deploy/nodes/dev.yml`**
 
@@ -702,8 +719,9 @@ run_tests() {
   local t f msg out
   for t in "two-controllers:use 1, 3 or 5" \
            "no-network:no node has the network role" \
-           "too-few-storage:storage hosts for ceph_pool_size" \
-           "unknown-role:needs ansible_host, storage_ip and node_roles"; do
+           "too-few-storage:1 storage hosts for ceph_pool_size 2" \
+           "unknown-role:needs ansible_host, storage_ip and node_roles" \
+           "empty:the node file lists no nodes"; do
     f=${t%%:*} msg=${t#*:}
     if out=$(ansible-playbook -i "nodes/testdata/$f.yml" -i nodes/roles.yml playbooks/validate.yml 2>&1); then
       echo "FAIL: nodes/testdata/$f.yml passed validation" >&2
