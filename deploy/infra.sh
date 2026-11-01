@@ -67,6 +67,9 @@ apply() {
     if [[ ! -f $cluster_dir/clouds.yaml ]]; then
       ka post-deploy
     fi
+  fi
+  play openstack-init.yml
+  if [[ -n $PENDING ]]; then
     play markers.yml --limit "$PENDING"
   fi
 }

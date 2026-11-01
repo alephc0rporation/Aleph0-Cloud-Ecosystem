@@ -1,0 +1,101 @@
+# Initial OpenStack resources. Idempotent; uses the kolla-admin cloud from OS_CLOUD.
+- name: Initial OpenStack resources
+  hosts: localhost
+  gather_facts: false
+  vars:
+    cirros_version: "0.6.3"
+    cirros_file: "{{ cluster_dir }}/cirros-{{ cirros_version }}-x86_64-disk.img"
+    api_password: "{{ lookup('ansible.builtin.password', cluster_dir ~ '/credentials/aleph0-api length=32 chars=ascii_letters,digits') }}"
+  tasks:
+    - name: External network for floating IPs
+      openstack.cloud.network:
+        name: public
+        external: true
+        provider_network_type: flat
+        provider_physical_network: physnet1
+
+    - name: External subnet
+      openstack.cloud.subnet:
+        name: public
+        network: public
+        cidr: 10.30.0.0/24
+        gateway_ip: 10.30.0.1
+        enable_dhcp: false
+        allocation_pool_start: 10.30.0.100
+        allocation_pool_end: 10.30.0.199
+
+    - name: Flavors
+      openstack.cloud.compute_flavor:
+        name: "{{ item.name }}"
+        vcpus: "{{ item.vcpus }}"
+        ram: "{{ item.ram }}"
+        disk: "{{ item.disk }}"
+      loop:
+        - { name: s.tiny, vcpus: 1, ram: 256, disk: 1 }
+        - { name: s.small, vcpus: 1, ram: 1024, disk: 10 }
+
+    - name: Download CirrOS
+      ansible.builtin.get_url:
+        url: "https://download.cirros-cloud.net/{{ cirros_version }}/cirros-{{ cirros_version }}-x86_64-disk.img"
+        dest: "{{ cirros_file }}"
+        mode: "0644"
+
+    - name: CirrOS image
+      openstack.cloud.image:
+        name: cirros
+        filename: "{{ cirros_file }}"
+        disk_format: qcow2
+        container_format: bare
+        is_public: true
+
+    - name: Dev project
+      openstack.cloud.project:
+        name: dev
+        domain: default
+
+    - name: Backend service user
+      openstack.cloud.identity_user:
+        name: aleph0-api
+        password: "{{ api_password }}"
+        domain: default
+        default_project: dev
+        update_password: on_create
+
+    - name: Backend service user is a member of dev
+      openstack.cloud.role_assignment:
+        user: aleph0-api
+        role: member
+        project: dev
+
+    - name: Dev private network
+      openstack.cloud.network:
+        name: dev-net
+        project: dev
+
+    - name: Dev private subnet
+      openstack.cloud.subnet:
+        name: dev-subnet
+        network: dev-net
+        project: dev
+        cidr: 192.168.100.0/24
+
+    - name: Dev router to the external network
+      openstack.cloud.router:
+        name: dev-router
+        project: dev
+        network: public
+        interfaces:
+          - dev-subnet
+
+    - name: Allow ICMP and SSH in dev's default security group
+      openstack.cloud.security_group_rule:
+        security_group: default
+        project: dev
+        direction: ingress
+        protocol: "{{ item.protocol }}"
+        port_range_min: "{{ item.port | default(omit) }}"
+        port_range_max: "{{ item.port | default(omit) }}"
+        remote_ip_prefix: 0.0.0.0/0
+      loop:
+        - { protocol: icmp }
+        - { protocol: tcp, port: 22 }
