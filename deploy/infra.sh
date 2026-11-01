@@ -12,6 +12,7 @@ if [[ $cmd != test && ! -f $nodes ]]; then echo "no such node file: deploy/$node
 mkdir -p "$cluster_dir" && chmod 700 "$cluster_dir"   # holds keyrings, passwords and credentials
 
 export PATH=$PWD/.venv/bin:$PATH
+export OS_CLIENT_CONFIG_FILE=$cluster_dir/clouds.yaml OS_CLOUD=kolla-admin
 if [[ $env == dev ]]; then
   # Dev VMs are recreated with the same addresses, so their host keys change.
   export ANSIBLE_HOST_KEY_CHECKING=False
@@ -55,6 +56,19 @@ apply() {
     ka bootstrap-servers --limit "$limit"
   fi
   play ceph.yml   # every run, so ceph_pool_size and spec changes apply even when no node changed
+  if [[ -n $PENDING ]]; then
+    ka prechecks --limit "$limit"
+    ka pull --limit "$limit"
+    if [[ $PENDING_CONTROL == yes ]]; then
+      ka deploy   # HAProxy, Galera, RabbitMQ and the OVN databases must learn the new controller
+    else
+      ka deploy --limit "$limit"
+    fi
+    if [[ ! -f $cluster_dir/clouds.yaml ]]; then
+      ka post-deploy
+    fi
+    play markers.yml --limit "$PENDING"
+  fi
 }
 
 destroy() {

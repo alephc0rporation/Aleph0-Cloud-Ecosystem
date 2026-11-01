@@ -27,3 +27,7 @@ enable_horizon: "no"         # we have our own portal
 enable_octavia: "no"         # with the load balancer step
 enable_ceph_rgw: "no"        # Ceph runs RGW; Keystone/HAProxy integration comes with the S3 step
 enable_fluentd: "no"         # saves memory in dev
+
+# Prebuilt images exist only in quay.io/openstack.kolla, which prechecks rejects unless told they are
+# for testing (same as --use-test-images). Fine for dev; production needs its own registry.
+kolla_test_images: "yes"
