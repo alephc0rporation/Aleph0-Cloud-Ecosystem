@@ -100,7 +100,7 @@
       changed_when: false
       retries: 60
       delay: 10
-      until: (osd_stat.stdout | from_json).num_up_osds >= expected_osds | int
+      until: osd_stat.rc == 0 and (osd_stat.stdout | from_json).num_up_osds >= expected_osds | int
 
     - name: Create pools and users, export ceph.conf and keyrings
       ansible.builtin.command: "{{ shell }} bash /specs/pools.sh"

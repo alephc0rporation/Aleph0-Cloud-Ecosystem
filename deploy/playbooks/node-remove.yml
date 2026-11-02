@@ -78,6 +78,8 @@
             fail_msg: |
               {{ node }} still runs servers and stays disabled. Move them, then rerun make node-remove:
               openstack server list --all-projects --host {{ node }} -f value -c ID | xargs -r -n1 openstack server migrate --live-migration --wait
+              To keep the node instead, enable it again:
+              openstack compute service set --enable {{ node }} nova-compute
 
 - name: Remove the node from OpenStack and Ceph
   hosts: localhost
@@ -136,7 +138,7 @@
               changed_when: false
               retries: 90
               delay: 20
-              until: daemons.stdout is search('No daemons') or (daemons.stdout | from_json | length == 0)
+              until: daemons.rc == 0 and (daemons.stdout is search('No daemons') or (daemons.stdout | from_json | length == 0))
 
             - name: Remove the node from Ceph
               ansible.builtin.command: cephadm shell -- ceph orch host rm {{ node }}
