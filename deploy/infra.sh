@@ -181,6 +181,14 @@ remove() {
 
 destroy() {
   dev_only infra-destroy
+  local answer
+  if [[ -t 0 ]]; then   # scripts and CI, without a terminal, are not asked
+    read -r -p "Destroy the dev cluster? [y/N] " answer
+    if [[ $answer != [yY] ]]; then
+      echo "Nothing destroyed."
+      exit 1
+    fi
+  fi
   tf init -input=false >/dev/null
   tf workspace select -or-create dev
   tf destroy -input=false -auto-approve -var "nodes_file=$PWD/$nodes"
