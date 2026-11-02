@@ -12,7 +12,7 @@ differs.
 | Node OS | Ubuntu 24.04 (Noble) cloud image | the only Ubuntu release Kolla-Ansible 2026.2 supports |
 | Kolla-Ansible | `stable/2026.2`, installed from git into the venv | latest stable; `kolla_base_distro: ubuntu` to match the hosts |
 | Ansible | `ansible-core` 2.20–2.21 (Kolla's pin), host `python3` (3.14) | that range supports Python 3.12–3.14 on the controller |
-| Ceph | Tentacle 20.2.0: image `quay.io/ceph/ceph:v20.2.0`, cephadm from `download.ceph.com/rpm-20.2.0` | matches the Ceph client libraries in Kolla's 2026.2 images; 20.2.4 monitors require the `aes256k` cephx cipher those clients cannot read. Upgrade Ceph together with Kolla's images |
+| Ceph | Tentacle 20.2.0: image `quay.io/ceph/ceph:v20.2.0`, cephadm from `download.ceph.com/rpm-20.2.0` | matches the Ceph client libraries in Kolla's 2026.2 images; 20.2.4 monitors require the `aes256k` cephx cipher those clients cannot read. Upgrade Ceph together with Kolla's images; 20.2.0 lacks 20.2.4's cephx security fix |
 | Terraform | 1.17.1, provider `dmacvicar/libvirt` 0.9.9 (`.terraform.lock.hcl` committed) | already chosen in `docs/architecture.md` |
 | `openstack.cloud` collection | 2.6.0 | the OpenStack init playbook |
 
@@ -28,7 +28,7 @@ deploy/
 ├── README.md              # requirements, commands, adding/removing nodes, manual controller removal
 ├── requirements.txt       # ansible-core, kolla-ansible (git, stable/2026.2), openstacksdk, openstackclient
 ├── requirements.yml       # Ansible collections: openstack.cloud
-├── infra.sh               # apply | remove | destroy | test <env> [node]
+├── infra.sh               # apply | remove | destroy | stop | start | reconfigure | test <env> [node|tags]
 ├── nodes/
 │   ├── dev.yml            # the dev cluster
 │   ├── roles.yml          # constructed plugin: node_roles → role_* groups
@@ -51,7 +51,8 @@ deploy/
 │   ├── ceph.yml
 │   ├── openstack-init.yml
 │   ├── markers.yml
-│   └── node-remove.yml
+│   ├── node-remove.yml
+│   └── start.yml          # brings OpenStack back after the dev VMs boot
 └── terraform/             # libvirt VMs and networks from the node file
 ```
 
@@ -117,7 +118,7 @@ Every Ansible and Kolla command gets three inventories, in this order:
 | Role | Kolla groups | Ceph labels (cephadm) |
 |---|---|---|
 | `control` | control, monitoring, storage (cinder-volume) | `mon`, `mgr`, `rgw`, `_admin` |
-| `network` | network (OVN gateway) | — |
+| `network` | network (OVN gateway), loadbalancer (HAProxy + keepalived, the API VIP) | — |
 | `compute` | compute | — |
 | `storage` | baremetal only (Docker) | `osd`, on the disks in `ceph_devices` |
 
@@ -162,6 +163,14 @@ Ceph belongs on the controllers. The `role_` prefix keeps the two apart.
   host): "nodeX: still part of the cluster: run `make node-remove ENV=<env>
   NODE=nodeX`, or put it back in the file." When the first controller has no `cephadm` yet
   (before Ceph's first run, or while Ceph is rebuilt), it skips Ceph's hosts and says so.
+- **Ceph bootstrap host first**: Ceph is administered from the first controller in the file,
+  and `ceph.yml` bootstraps Ceph there when it has none, so a controller listed above the
+  bootstrap host would start a second Ceph cluster. The controller with `/etc/ceph/ceph.pub`
+  (only the bootstrap host has it; controllers that do not answer yet are skipped) must be
+  first: "Ceph runs from node1: keep it first among the controllers in the node file". Chosen
+  over finding the admin host dynamically, which would touch every place that runs Ceph
+  commands (`ceph.yml`, `validate.yml`, `node-remove.yml`, `infra.sh` stop/start) for an edit
+  that a one-line rule avoids.
 
 The internal API address is the dedicated VIP with HAProxy + keepalived from day one
 (`enable_haproxy: yes`), so endpoints and the API's `OS_AUTH_URL` do not move when controllers
@@ -170,18 +179,31 @@ join. Ceph replication is the explicit `ceph_pool_size`; nothing lowers it.
 ## `make infra-apply ENV=<env>`
 
 `deploy/infra.sh apply <env>`, idempotent; the same command does the first bring-up, adds nodes
-and adds roles:
+and adds roles. In dev, when any `aleph0-*` VM is defined but not running, it stops at once
+with "dev VMs are stopped: run make infra-start first" (so do `node-remove` and
+`infra-reconfigure`).
 
 1. **Validate** (above).
-2. **Machines**: `terraform apply` in the env's workspace. Existing VMs are untouched.
-3. **Hosts** (`playbooks/hosts.yml`): wait for SSH and, on VMs, for cloud-init; drop the
-   `127.0.1.1 <hostname>` line; write every node into `/etc/hosts` on **all** nodes
-   (`customize_etc_hosts: no` in `globals.yml`: rerunning Kolla's `bootstrap-servers` on live
-   nodes can restart Docker).
+2. **Machines**: Terraform in the env's workspace. Before a cluster exists (no `clouds.yaml`),
+   `terraform apply`. Once it exists, `terraform plan` to `deploy/kolla/<env>/apply.tfplan`;
+   if any resource change contains `delete` (a replace included: a new `ansible_host`, which
+   changes the MACs, `ceph_disk_gb`, the SSH key, the Noble image URL), it stops before
+   applying anything, lists the resources and says to undo the change or remove the node and
+   add it back. Otherwise it applies the saved plan: new nodes and in-place updates. The check
+   is the same helper `node-remove` uses, with another rule.
+3. **Hosts** (`playbooks/hosts.yml`): wait for SSH and, on VMs, for cloud-init (exit code 2,
+   degraded but usable, is accepted); drop the `127.0.1.1 <hostname>` line; write every node
+   into `/etc/hosts` on **all** nodes (`customize_etc_hosts: no` in `globals.yml`: rerunning
+   Kolla's `bootstrap-servers` on live nodes can restart Docker). On VMs, a 2 GB `/swapfile`,
+   formatted under a temporary name and then moved into place, so a cut run never leaves an
+   unformatted one.
 4. **Pending** (`playbooks/pending.yml`): a node is pending when its `/etc/aleph0/roles` marker
-   is missing or lists different roles than the file. Writes `deploy/kolla/<env>/pending.env`
+   is missing or lists different roles than the file. A marker role that the file dropped
+   stops the run before `pending.env` is written: dropping a role is not supported (its
+   services would keep running; a storage node would keep its OSD and `node-remove` would skip
+   its drain), so the node is removed and added back. Writes `deploy/kolla/<env>/pending.env`
    with `PENDING=<comma-separated nodes>` and `PENDING_CONTROL=yes|no`. When `PENDING` is
-   empty, steps 5, 7 and 9 are skipped; steps 6 and 8 still run, so changes to
+   empty, steps 5 and 7 are skipped; steps 6 and 8 still run, so changes to
    `ceph_pool_size` and the Ceph specs apply without a node change.
 5. **Docker**: `kolla-ansible bootstrap-servers --limit <pending>`; when `PENDING_CONTROL=yes`
    the limit also includes `role_control`, as Kolla requires when controllers are added.
@@ -196,22 +218,25 @@ and adds roles:
    - pool script: `osd_memory_target` when set, pools `volumes`, `images`, `vms`, `backups`
      (`size` = `ceph_pool_size`, `min_size` = size − size/2, every run), users `client.glance`,
      `client.cinder`, `client.cinder-backup` (Nova uses `client.cinder`, Kolla's default);
-   - wait until every disk in `ceph_devices` is an up OSD;
+   - wait until every disk in `ceph_devices` is an up OSD (a failing `cephadm` call is
+     retried);
    - fetch `ceph.conf` + keyrings into `deploy/kolla/<env>/config/` in Kolla's external-Ceph
      layout, plus `glance.conf` with `show_image_direct_url = True`.
 7. **Kolla**, with `--configdir deploy/kolla/<env>` and `--passwords` there: `kolla-genpwd`
    once, `prechecks` and `pull` with the step-5 limit (`pull` up to 3 attempts 30 s apart:
    quay.io resets connections mid-download), `deploy` with that limit, or on **all**
-   nodes when `PENDING_CONTROL=yes`; `post-deploy` while `clouds.yaml` is missing.
+   nodes when `PENDING_CONTROL=yes`; `post-deploy` while `clouds.yaml` is missing. Then
+   **markers** (`playbooks/markers.yml`): write `/etc/aleph0/roles` on the pending nodes,
+   before the init, so a failed init does not make the next apply redeploy them.
 8. **OpenStack init** (`playbooks/openstack-init.yml`, `openstack.cloud` modules, idempotent):
    external network `public` (flat, `physnet1`) with subnet 10.30.0.0/24, gateway .1, pool
    .100–.199, no DHCP; flavors `s.tiny` (1 vCPU, 256 MB, 1 GB) and `s.small` (1, 1 GB, 10 GB);
-   public image `cirros` (0.6.3); project `dev` with network `dev-net`, subnet
+   public image `cirros` (0.6.3, downloaded with its SHA-256, so an existing file is not
+   fetched again, and retried); project `dev` with network `dev-net`, subnet
    192.168.100.0/24 and router `dev-router` to `public`; ICMP and SSH allowed in `dev`'s
    default security group; user `aleph0-api` with `member` on `dev`, password generated into
    `deploy/kolla/<env>/credentials/`. Kolla's own `admin` (local, not federated, password in
    `passwords.yml`) is the emergency admin; no second admin account.
-9. **Markers** (`playbooks/markers.yml`): write `/etc/aleph0/roles` on the pending nodes.
 
 Kolla runs from `deploy/.venv`, a Make target built from `deploy/requirements.txt` and
 `deploy/requirements.yml` (plus `kolla-ansible install-deps`), like `web/node_modules`. In dev,
@@ -221,27 +246,44 @@ Kolla runs from `deploy/.venv`, a Make target built from `deploy/requirements.tx
 
 `deploy/infra.sh remove <env> <node>`. Only for nodes whose roles are all `compute` and/or
 `storage`; a node with `control` or `network` is refused, and `deploy/README.md` documents the
-manual procedure.
+manual procedure. Every step is safe to rerun after an interruption.
 
-1. Checks (`node-remove.yml`, tag `check`): the node is in the file; its roles are allowed; at
+1. Dev (the file has `vm:` blocks), before anything touches the node: `terraform plan` of the
+   node file without the node, to `deploy/kolla/<env>/remove-<node>.tfplan`. It refuses unless
+   every change is a `delete` of that node's resources ("Terraform would change more than
+   <node>; run make infra-apply first and retry"). A targeted `terraform destroy` is not used:
+   every domain depends on the shared volume resources, so it would take every VM with it.
+2. Checks (`node-remove.yml`, tag `check`): the node is in the file; its roles are allowed; at
    least one other compute node remains; remaining storage hosts ≥ `ceph_pool_size`; Ceph
-   `HEALTH_OK`. Compute: `openstack compute service set --disable <node> nova-compute`; if
-   servers still run there, stop and print the live-migrate command (the node stays disabled).
-2. `kolla-ansible stop --yes-i-really-really-mean-it --ignore-missing --limit <node>`.
-3. Cleanup (tag `cleanup`): compute: delete the node's network agents and compute service
-   (`--os-compute-api-version 2.53`). Storage: `ceph orch host drain <node>`, wait until
-   `ceph orch ps <node>` lists no daemons, `ceph orch host rm <node>`. Delete the node's marker
-   (ignored if the node is unreachable).
-4. Dev: `terraform destroy` targeting that node's domain and volumes only.
-5. Print: "Remove <node> from deploy/nodes/<env>.yml." The script never edits the file.
+   `HEALTH_OK` (any `HEALTH_WARN` refuses) while the node is still a Ceph host, so a rerun
+   after it left Ceph does not depend on the cluster's health. Compute: if its `nova-compute`
+   service still exists, `openstack compute service set --disable <node> nova-compute`; if
+   servers still run there, stop and print the live-migrate command and the
+   `openstack compute service set --enable <node> nova-compute` that undoes the disable (the
+   node stays disabled).
+3. When the node answers: `kolla-ansible destroy --yes-i-really-really-mean-it --limit <node>`
+   (not `stop`: a physical node that reboots must not bring its containers back). When it
+   does not, skip it and say so: a physical node stays in the file until `destroy` has run on
+   it (`deploy/README.md`).
+4. Cleanup (tag `cleanup`): compute: delete the node's network agents and compute service
+   (`--os-compute-api-version 2.53`). Storage, while the node is still a Ceph host:
+   `ceph orch rm osd.<node> --force` (drain refuses a host an OSD spec names, with exit code 0;
+   the OSDs keep running), `ceph orch host drain <node>`, wait until `ceph orch ps <node>`
+   lists no daemons (a failing `cephadm` call is retried), `ceph orch host rm <node>`; then,
+   always, `ceph osd crush remove <node>` (`host rm` leaves the empty bucket; a missing one is
+   not an error). Delete the node's marker (ignored if the node is unreachable).
+5. Dev: `terraform apply` of the saved plan, which deletes only the node's VM and volumes.
+6. Print: "Remove <node> from deploy/nodes/<env>.yml." (for a skipped physical node: keep it
+   in the file until its Kolla cleanup has run). The script never edits the file.
 
 If the file still lists the node, the next `infra-apply` adds it back as a new node, which is
 what the file says.
 
 ## `make infra-destroy ENV=dev`
 
-`terraform destroy` in the `dev` workspace, then delete everything in `deploy/kolla/dev/` except
-`globals.yml`. Refuses any other env.
+Asks "Destroy the dev cluster? [y/N]" when stdin is a terminal (scripts and CI are not asked),
+then `terraform destroy` in the `dev` workspace and deletes everything in `deploy/kolla/dev/`
+except `globals.yml`. Refuses any other env.
 
 ## `make infra-stop ENV=dev`
 
@@ -315,7 +357,10 @@ and `kvm` groups; Terraform 1.17.1 in `/usr/local/bin`; an SSH key at `~/.ssh/id
 
 - `ansible-playbook playbooks/validate.yml` against `nodes/testdata/valid.yml` passes, and
   against `two-controllers.yml`, `no-network.yml`, `too-few-storage.yml`, `unknown-role.yml`, `empty.yml`
-  fails. The orphan check is skipped because no `clouds.yaml` is passed.
+  fails. The checks against an existing cluster are skipped because no `cluster_dir` is passed.
+- The Terraform plan check on canned `terraform show -json` plans, one allowed and one refused
+  for each rule: for `infra-apply` a create passes and a replace is refused; for removing node3
+  deleting node3's volume passes and deleting it plus creating node4 is refused.
 - `terraform validate`.
 
 Everything else is covered by the acceptance criteria in #2, on real VMs.
@@ -330,7 +375,8 @@ Everything else is covered by the acceptance criteria in #2, on real VMs.
 
 ## Out of scope
 
-Scripted removal of control and network nodes; dropping one role from a node; the production
+Scripted removal of control and network nodes; dropping one role from a node (`infra-apply`
+refuses it); the production
 node file and production secrets; Octavia; Kolla's RGW integration (Keystone endpoint, HAProxy
 frontend: `enable_ceph_rgw: no` until the S3 step; Ceph runs RGW itself); Ubuntu and Debian
 guest images.
