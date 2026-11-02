@@ -31,8 +31,15 @@ dev_only() {
   fi
 }
 virsh() { command virsh -c qemu:///system "$@"; }
-vms_running() { virsh list --name | grep '^aleph0-' || true; }
-ceph_admin() { ansible "${inv[@]}" 'role_control[0]' -b -m command -a "cephadm shell -- ceph $*"; }
+# The aleph0 VMs (running ones; --inactive for the stopped ones). Assign it (v=$(aleph0_vms)) so
+# that an unreachable libvirt stops the script; no aleph0 VM at all is a normal, empty answer.
+aleph0_vms() {
+  local names
+  names=$(virsh list --name "$@") || { echo "virsh cannot reach libvirt (qemu:///system); is libvirtd running?" >&2; exit 1; }
+  grep '^aleph0-' <<<"$names" || true
+}
+# The timeout keeps a call short while the monitors are not in quorum, so callers can retry.
+ceph_admin() { ansible "${inv[@]}" 'role_control[0]' -b -m command -a "cephadm shell -- ceph --connect-timeout 30 $*"; }
 api_up() {
   local _
   for _ in $(seq 30); do
@@ -78,7 +85,11 @@ apply() {
     for attempt in 1 2 3; do   # quay.io resets connections mid-download from the VMs
       echo "kolla-ansible pull, attempt $attempt of 3"
       ka pull --limit "$limit" && break
-      [[ $attempt == 3 ]] && exit 1
+      if [[ $attempt == 3 ]]; then
+        echo "kolla-ansible pull failed after 3 attempts; rerun make infra-apply" >&2
+        exit 1
+      fi
+      sleep 30
     done
     if [[ $PENDING_CONTROL == yes ]]; then
       ka deploy   # HAProxy, Galera, RabbitMQ and the OVN databases must learn the new controller
@@ -142,41 +153,70 @@ destroy() {
 
 stop() {
   dev_only infra-stop
+  local d _ running
+  running=$(aleph0_vms)
+  if [[ -z $running ]]; then
+    echo "All aleph0 VMs are off."
+    return
+  fi
   # Every node goes down at once: Ceph must not start re-replicating data meanwhile.
   ceph_admin osd set noout || echo "Ceph did not answer; stopping anyway." >&2
-  local d _
-  for d in $(vms_running); do virsh shutdown "$d" >/dev/null; done
+  for d in $running; do virsh shutdown "$d" >/dev/null; done
   for _ in $(seq 60); do
-    if [[ -z $(vms_running) ]]; then
+    running=$(aleph0_vms)
+    if [[ -z $running ]]; then
       echo "All aleph0 VMs are off."
       return
     fi
     sleep 5
   done
-  echo "VMs still running after 5 minutes; forcing them off: $(vms_running | xargs)" >&2
-  for d in $(vms_running); do virsh destroy "$d" >/dev/null; done
+  echo "VMs still running after 5 minutes; forcing them off: $(xargs <<<"$running")" >&2
+  for d in $running; do virsh destroy "$d" >/dev/null || true; done   # one may finish its shutdown meanwhile
+  running=$(aleph0_vms)
+  if [[ -n $running ]]; then
+    echo "Could not force off: $(xargs <<<"$running")" >&2
+    exit 1
+  fi
+  echo "VMs were forced off; make infra-start runs mariadb-recovery itself if the OpenStack API does not come back."
 }
 
 start() {
   dev_only infra-start
-  local d _
-  for d in $(virsh list --inactive --name | grep '^aleph0-' || true); do virsh start "$d" >/dev/null; done
+  local d stopped deadline noout=set health=
+  stopped=$(aleph0_vms --inactive)
+  for d in $stopped; do virsh start "$d" >/dev/null; done
   play hosts.yml
-  ceph_admin osd unset noout
-  for _ in $(seq 60); do
-    [[ $(ceph_admin health) == *HEALTH_OK* ]] && break   # not grep -q: under pipefail its SIGPIPE fails the check
+  # Right after boot the monitors may not be in quorum yet. Unsetting noout is idempotent: retry it.
+  deadline=$((SECONDS + 600))
+  while (( SECONDS < deadline )); do
+    if [[ $noout == set ]] && ceph_admin osd unset noout >/dev/null 2>&1; then noout=unset; fi
+    if [[ $noout == unset ]]; then
+      health=$(ceph_admin health 2>&1) || true
+      [[ $health == *HEALTH_OK* ]] && break
+    fi
     sleep 10
   done
-  ceph_admin health
+  if [[ $noout == set ]]; then
+    echo "Ceph is not up yet; rerun make infra-start" >&2
+    exit 1
+  fi
+  if [[ $health == *HEALTH_OK* ]]; then
+    echo "Ceph is HEALTH_OK."
+  else
+    echo "Warning: Ceph is not HEALTH_OK after 10 minutes; going on. $(sed -n 's/Inferring fsid.*//; /^HEALTH_/p' <<<"$health")" >&2
+  fi
   # start.yml restarts the containers that came up before MariaDB and checks every service.
   if [[ -f $cluster_dir/clouds.yaml ]] && ! play start.yml; then
     if api_up; then
-      echo "The OpenStack API answers, so MariaDB is fine; see the failed task above." >&2
+      echo "The OpenStack API answers, so MariaDB is fine; fix the failed task above, then rerun make infra-start" >&2
       exit 1
     fi
     echo "OpenStack API is not answering; recovering MariaDB." >&2
     ka mariadb-recovery
-    play start.yml
+    if ! play start.yml; then
+      echo "OpenStack API still not answering after mariadb-recovery; see the failed task above" >&2
+      exit 1
+    fi
   fi
   echo "Cluster is up. Servers inside OpenStack come back SHUTOFF: openstack server start <name>."
 }

@@ -200,8 +200,8 @@ and adds roles:
    - fetch `ceph.conf` + keyrings into `deploy/kolla/<env>/config/` in Kolla's external-Ceph
      layout, plus `glance.conf` with `show_image_direct_url = True`.
 7. **Kolla**, with `--configdir deploy/kolla/<env>` and `--passwords` there: `kolla-genpwd`
-   once, `prechecks` and `pull` with the step-5 limit (`pull` up to 3 attempts: quay.io resets
-   connections mid-download), `deploy` with that limit, or on **all**
+   once, `prechecks` and `pull` with the step-5 limit (`pull` up to 3 attempts 30 s apart:
+   quay.io resets connections mid-download), `deploy` with that limit, or on **all**
    nodes when `PENDING_CONTROL=yes`; `post-deploy` while `clouds.yaml` is missing.
 8. **OpenStack init** (`playbooks/openstack-init.yml`, `openstack.cloud` modules, idempotent):
    external network `public` (flat, `physnet1`) with subnet 10.30.0.0/24, gateway .1, pool
@@ -245,19 +245,26 @@ what the file says.
 
 ## `make infra-stop ENV=dev`
 
-`deploy/infra.sh stop dev` frees the dev VMs' RAM. Refuses any other env.
+`deploy/infra.sh stop dev` frees the dev VMs' RAM. Refuses any other env. Stops with an error
+when `virsh` cannot reach libvirt; with no `aleph0-*` VM running it only says they are off.
 
 1. `ceph osd set noout`, so Ceph does not re-replicate while every node is down (if Ceph does
    not answer, it says so and goes on).
 2. `virsh shutdown` of every running `aleph0-*` domain; wait up to 5 minutes, then
-   `virsh destroy` the ones still running.
+   `virsh destroy` the ones still running, check they are off, and say that `make infra-start`
+   runs `mariadb-recovery` itself if the OpenStack API does not come back.
 
 ## `make infra-start ENV=dev`
 
-`deploy/infra.sh start dev`. Refuses any other env.
+`deploy/infra.sh start dev`. Refuses any other env. It is also the way back after any host
+restart (WSL or Windows): a plain boot leaves OpenStack services broken, and this repairs them.
+It is safe to run on a running cluster.
 
 1. `virsh start` every stopped `aleph0-*` domain; `playbooks/hosts.yml` waits for SSH.
-2. `ceph osd unset noout`; wait up to 10 minutes for `HEALTH_OK`, then print Ceph's health.
+2. Within 10 minutes: `ceph osd unset noout`, retried until the monitors answer (every `ceph`
+   call has a 30 s connect timeout), then wait for `HEALTH_OK`. If noout could not be unset:
+   "Ceph is not up yet; rerun make infra-start", exit 1. If Ceph is not `HEALTH_OK` by then,
+   print a warning with its health line and go on.
 3. With `clouds.yaml` present, `playbooks/start.yml`:
    - on the controllers, wait until `mariadb`, `proxysql` and `rabbitmq` are healthy;
    - on every node, restart the Kolla containers (label `kolla_version`; cephadm's are never
@@ -270,7 +277,8 @@ what the file says.
    - wait until every compute service, network agent and volume service is up (each list also
      needs a token).
 4. If `start.yml` fails and `openstack token issue` does not answer for 5 minutes:
-   `kolla-ansible mariadb-recovery`, then `start.yml` again.
+   `kolla-ansible mariadb-recovery`, then `start.yml` again. If the API does answer, MariaDB is
+   fine: it stops and asks to fix the failed task and rerun `make infra-start`.
 5. Print: servers inside OpenStack come back `SHUTOFF`; `openstack server start <name>`.
 
 ## `make infra-reconfigure ENV=<env> [TAGS=a,b]`
