@@ -25,8 +25,8 @@ The Ansible/Kolla toolchain installs itself into `deploy/.venv` on first use.
 | `make infra-stop` | Shuts the dev VMs down cleanly and frees most of their RAM (dev only) |
 | `make infra-start` | Boots them again, waits for Ceph, and repairs the OpenStack services a boot leaves broken (dev only) |
 | `make infra-reconfigure [TAGS=a,b]` | Applies `globals.yml` or Ceph key changes to the running cluster (`kolla-ansible reconfigure`) |
-| `make infra-destroy` | Deletes the dev VMs and the generated files (dev only) |
-| `make infra-test` | Checks the validation rules and the Terraform config, no cluster needed |
+| `make infra-destroy` | Deletes the dev VMs and the generated files (dev only; asks first when run in a terminal) |
+| `make infra-test` | Checks the validation rules, the Terraform plan check and the Terraform config, no cluster needed |
 
 The first `infra-apply` takes about 30–60 minutes, mostly image pulls (32 minutes measured);
 later runs only deploy the nodes that changed.
@@ -44,7 +44,8 @@ later runs only deploy the nodes that changed.
 Run `make infra-stop` when you are done for the day: it frees most of the VMs' RAM (one clean
 run went from 19 GB used to 1 GB). Run it before `wsl --shutdown` or restarting Windows too:
 VMs killed with WSL can leave MariaDB unable to start. It also tells Ceph not to re-replicate
-data while every node is off.
+data while every node is off. While the VMs are off, `infra-apply`, `node-remove` and
+`infra-reconfigure` stop at once with "dev VMs are stopped: run make infra-start first".
 
 `make infra-start` boots the VMs and waits up to 10 minutes for Ceph `HEALTH_OK`. If Ceph is not
 healthy by then it warns and goes on; it stops only when Ceph has no quorum (rerun it).
@@ -64,12 +65,19 @@ back `SHUTOFF`; start them with `openstack server start <name>`.
 | Role | Runs |
 |---|---|
 | `control` | OpenStack APIs, databases, RabbitMQ, OVN databases, cinder-volume; Ceph mon, mgr, RGW |
-| `network` | OVN gateway (floating IPs, router traffic) |
+| `network` | OVN gateway (floating IPs, router traffic); HAProxy and keepalived, which hold the API VIP (Kolla's `loadbalancer` group is `network` in `services.ini`) |
 | `compute` | nova-compute (tenant VMs) |
 | `storage` | Ceph OSDs on the disks in `ceph_devices` |
 
 Rules, checked before anything changes: 1, 3 or 5 controllers; at least one network and one
-compute node; at least `ceph_pool_size` storage nodes.
+compute node; at least `ceph_pool_size` storage nodes. Once Ceph runs, the controller it was
+bootstrapped on (`node1` in dev) stays first among the controllers in the file: Ceph is run
+from the first controller, and a new one listed above it would get a second Ceph cluster.
+
+Once a cluster exists, `infra-apply` refuses, before applying anything, a change that makes
+Terraform delete or replace a VM or one of its disks (a new `ansible_host`, which changes the
+MACs, a new `ceph_disk_gb`, a new SSH key); it lists the resources. Undo the change, or remove the node and
+add it back. New nodes and in-place changes are applied.
 
 Kolla variables never go in the node file: `deploy/kolla/<env>/globals.yml` maps the file's
 own names (`vip_address`, `if_mgmt`, `if_storage`, `if_external`) onto Kolla's, so a node can
@@ -90,7 +98,11 @@ override them in its own entry.
 
 Add an entry to the node file and run `make infra-apply`. Only the new node is deployed, unless
 it has the `control` role: then Kolla runs on every node (APIs may blip; tenant VMs keep
-running). Controllers go from 1 to 3 in one apply.
+running). Controllers go from 1 to 3 in one apply (untested); list them below the first one.
+
+Roles can be added to a deployed node, not dropped: `infra-apply` refuses a node whose deployed
+roles (`/etc/aleph0/roles`) include one the file no longer lists, because that role's services
+would keep running. Remove the node and add it back with its new roles.
 
 ## Removing a node
 
@@ -100,12 +112,17 @@ running). Controllers go from 1 to 3 in one apply.
   - plans its Terraform change first and refuses, before touching anything, unless it only
     deletes this node's VM (drift elsewhere: run `make infra-apply`, then retry);
   - is safe to rerun after an interruption;
+  - stops scheduling on a compute node, and refuses while servers still run there: the node
+    stays disabled, and it prints how to move them or to enable the node again;
   - runs `kolla-ansible destroy` on the node so a reboot cannot bring its containers back
     (skipped, with a message, when the node does not answer);
   - for a storage node, drops its Ceph OSD spec, drains it, waits until no Ceph daemons are
     left, removes the host, and removes its CRUSH bucket.
-- Control or network (manual, for now; Kolla's "Removing existing controllers" order). Keep
-  an odd number of controllers, and remove one at a time. From the repo root, define `ka`, which
+- Control or network (manual, for now; Kolla's "Removing existing controllers" order).
+  `infra-apply` accepts only 1, 3 or 5 controllers, so removing one of 3 leaves a file it
+  refuses: go from 3 to 1 in one step (step 1 for both, one after the other, then the rest
+  once), or, to replace a controller, add controllers first (3 → 5), then remove two. Never
+  remove the first controller: Ceph runs from it. From the repo root, define `ka`, which
   runs Kolla the way `deploy/infra.sh` does (Kolla calls `ansible-playbook`, so the venv must be
   on the `PATH`; dev VMs are recreated with new host keys, so host key checking is off):
   ```bash
@@ -114,7 +131,8 @@ running). Controllers go from 1 to 3 in one apply.
   ka() { kolla-ansible "$1" -i deploy/nodes/dev.yml -i deploy/nodes/roles.yml -i deploy/kolla/services.ini --configdir "$PWD/deploy/kolla/dev" --passwords "$PWD/deploy/kolla/dev/passwords.yml" "${@:2}"; }
   export OS_CLIENT_CONFIG_FILE=$PWD/deploy/kolla/dev/clouds.yaml OS_CLOUD=kolla-admin
   ```
-  1. Stop its services: `ka stop --yes-i-really-really-mean-it --limit <node>`.
+  1. Remove its services: `ka destroy --yes-i-really-really-mean-it --limit <node>` (not
+     `stop`: a physical node that reboots would bring stopped containers back).
   2. Delete its entry from the node file.
   3. Controller: `ka deploy --limit control`, so MariaDB and RabbitMQ drop the old member.
      Network: OVN moves the routers' gateways to the remaining network nodes.
@@ -156,6 +174,10 @@ running). Controllers go from 1 to 3 in one apply.
   again after a restart.
 - **`infra-start` says "Ceph is not up yet":** the monitors were not in quorum within 10
   minutes. Rerun it. (Ceph up but not `HEALTH_OK` after 10 minutes is only a warning.)
+- **`node-remove` says "Ceph is not HEALTH_OK":** it refuses on any `HEALTH_WARN`, e.g.
+  `RECENT_CRASH`, which stop/start cycles can leave. On the first controller, see why with
+  `sudo cephadm shell -- ceph health detail`; if only old crash reports remain, archive them
+  with `sudo cephadm shell -- ceph crash archive-all` and rerun.
 
 ## Reaching OpenStack from WSL
 
@@ -177,7 +199,7 @@ emergency admin (not federated), password `keystone_admin_password` in
 - the Ceph keys and `ceph.conf` in `config/`
 - `admin-openrc*.sh` and `public-openrc*.sh`, written by Kolla's `post-deploy`
 - `cirros-*.img`, the downloaded CirrOS image
-- `remove-<node>.tfplan`, only while `node-remove` runs
+- `apply.tfplan` and `remove-<node>.tfplan`, only while `infra-apply` or `node-remove` runs
 
 Each node records its deployed roles in `/etc/aleph0/roles`. Terraform's state (one workspace
 per env) lives in `deploy/terraform/terraform.tfstate.d/`, outside `deploy/kolla/`.
