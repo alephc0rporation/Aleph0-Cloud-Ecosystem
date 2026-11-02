@@ -108,7 +108,7 @@ apply() {
 
 remove() {
   local node=${1:?usage: infra.sh remove <env> <node>}
-  local rest plan=$cluster_dir/remove-$node.tfplan
+  local rest plan=$cluster_dir/remove-$node.tfplan skipped=
   if has_vms; then
     # Plan the Terraform change first, before anything touches the node, and refuse unless it only
     # deletes resources of this node. Apply the node file without the node: a targeted destroy would
@@ -134,13 +134,18 @@ if other:
   if ansible "$node" "${inv[@]}" -m ansible.builtin.ping >/dev/null 2>&1; then
     ka destroy --yes-i-really-really-mean-it --limit "$node"
   else
-    echo "$node does not answer: skipping the Kolla cleanup on it; run kolla-ansible destroy --limit $node on it once it is reachable, or it may rejoin after a reboot."
+    skipped=yes
+    echo "$node does not answer: skipping the Kolla cleanup on it. A physical machine may rejoin after a reboot: keep $node in the node file until kolla-ansible destroy --limit $node has run on it (see deploy/README.md)."
   fi
   play node-remove.yml --tags cleanup -e "node=$node"
   if has_vms; then
     tf apply -input=false "$plan"   # nothing in between touches Terraform state, so the plan is still valid
   fi
-  echo "Remove $node from deploy/nodes/$env.yml."
+  if [[ $skipped == yes ]] && ! has_vms; then   # a dev VM is deleted with its node: nothing to clean up later
+    echo "$node is out of Ceph and OpenStack. Keep it in deploy/nodes/$env.yml until its Kolla cleanup has run (deploy/README.md), and do not run infra-apply meanwhile; then remove it from the file."
+  else
+    echo "Remove $node from deploy/nodes/$env.yml."
+  fi
 }
 
 destroy() {

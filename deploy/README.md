@@ -28,8 +28,8 @@ The Ansible/Kolla toolchain installs itself into `deploy/.venv` on first use.
 | `make infra-destroy` | Deletes the dev VMs and the generated files (dev only) |
 | `make infra-test` | Checks the validation rules and the Terraform config, no cluster needed |
 
-The first `infra-apply` takes one to two hours (mostly image pulls); later runs only deploy the
-nodes that changed.
+The first `infra-apply` takes about 30–60 minutes, mostly image pulls (32 minutes measured);
+later runs only deploy the nodes that changed.
 
 ## Versions
 
@@ -41,18 +41,19 @@ nodes that changed.
 
 ## Stopping and starting (dev)
 
-Run `make infra-stop` when you are done for the day: it frees most of the VMs' RAM (the
-clean run went from 19 GB used to 1 GB). Run it before `wsl --shutdown` or restarting Windows too: VMs killed with
-WSL can leave MariaDB unable to start. It also tells Ceph not to re-replicate data while every
-node is off.
+Run `make infra-stop` when you are done for the day: it frees most of the VMs' RAM (one clean
+run went from 19 GB used to 1 GB). Run it before `wsl --shutdown` or restarting Windows too:
+VMs killed with WSL can leave MariaDB unable to start. It also tells Ceph not to re-replicate
+data while every node is off.
 
-`make infra-start` boots the VMs, waits for Ceph `HEALTH_OK`, restarts the OpenStack containers
-that came up before MariaDB (and clears Neutron's stale start-time file first), and checks every
-compute, network and volume service. It runs `kolla-ansible mariadb-recovery` itself if the
-OpenStack API does not come back. It is safe on a running cluster, and it is the way back after
-**any** WSL or Windows restart, even one without `infra-stop`: a plain boot leaves some services
-broken. Servers inside OpenStack come back `SHUTOFF`; start them with
-`openstack server start <name>`.
+`make infra-start` boots the VMs and waits up to 10 minutes for Ceph `HEALTH_OK`. If Ceph is not
+healthy by then it warns and goes on; it stops only when Ceph has no quorum (rerun it).
+Then it restarts the OpenStack containers that came up before MariaDB (clearing Neutron's stale
+start-time file first) and checks every compute, network and volume service. It runs
+`kolla-ansible mariadb-recovery` itself if the OpenStack API does not come back. It is safe on
+a running cluster, and it is the way back after **any** WSL or Windows restart, even one
+without `infra-stop`: a plain boot leaves some services broken. Servers inside OpenStack come
+back `SHUTOFF`; start them with `openstack server start <name>`.
 
 ## The node file
 
@@ -104,16 +105,27 @@ running). Controllers go from 1 to 3 in one apply.
   - for a storage node, drops its Ceph OSD spec, drains it, waits until no Ceph daemons are
     left, removes the host, and removes its CRUSH bucket.
 - Control or network (manual, for now; Kolla's "Removing existing controllers" order). Keep
-  an odd number of controllers, and remove one at a time. With
-  `KA="deploy/.venv/bin/kolla-ansible -i deploy/nodes/dev.yml -i deploy/nodes/roles.yml -i deploy/kolla/services.ini --configdir $PWD/deploy/kolla/dev --passwords $PWD/deploy/kolla/dev/passwords.yml"`:
-  1. Stop its services: `$KA stop --yes-i-really-really-mean-it --limit <node>`.
+  an odd number of controllers, and remove one at a time. From the repo root, define `ka`, which
+  runs Kolla the way `deploy/infra.sh` does (Kolla calls `ansible-playbook`, so the venv must be
+  on the `PATH`; dev VMs are recreated with new host keys, so host key checking is off):
+  ```bash
+  export PATH=$PWD/deploy/.venv/bin:$PATH
+  export ANSIBLE_HOST_KEY_CHECKING=False     # dev only
+  ka() { kolla-ansible "$1" -i deploy/nodes/dev.yml -i deploy/nodes/roles.yml -i deploy/kolla/services.ini --configdir "$PWD/deploy/kolla/dev" --passwords "$PWD/deploy/kolla/dev/passwords.yml" "${@:2}"; }
+  export OS_CLIENT_CONFIG_FILE=$PWD/deploy/kolla/dev/clouds.yaml OS_CLOUD=kolla-admin
+  ```
+  1. Stop its services: `ka stop --yes-i-really-really-mean-it --limit <node>`.
   2. Delete its entry from the node file.
-  3. Controller: `$KA deploy --limit control`, so MariaDB and RabbitMQ drop the old member.
+  3. Controller: `ka deploy --limit control`, so MariaDB and RabbitMQ drop the old member.
      Network: OVN moves the routers' gateways to the remaining network nodes.
   4. Check the cluster: `openstack compute service list`, `openstack network agent list`.
   5. Delete its network agents and compute service, as in `deploy/playbooks/node-remove.yml`.
-  6. If it is a Ceph host: `ceph orch host drain <node>`, wait until `ceph orch ps <node>` lists
-     no daemons, then `ceph orch host rm <node>`.
+  6. If it is a Ceph host, on the first controller (`ssh ubuntu@<its ansible_host>`), each as
+     `sudo cephadm shell -- ceph ...`:
+     1. `orch rm osd.<node> --force`: drain does nothing while an OSD spec names the host;
+     2. `orch host drain <node>`;
+     3. wait until `orch ps <node>` lists no daemons;
+     4. `orch host rm <node>`, then `osd crush remove <node>`.
   7. Delete `/etc/aleph0/roles` on the node.
 
 ## Troubleshooting
@@ -127,19 +139,23 @@ running). Controllers go from 1 to 3 in one apply.
 - **`post-deploy` died halfway:** delete `deploy/kolla/<env>/clouds.yaml` and rerun
   `make infra-apply`, which runs `post-deploy` again while the file is missing.
 - **Lost `deploy/kolla/<env>/credentials/aleph0-api`:** the next apply writes a new password
-  file, but Keystone keeps the old password (`update_password: on_create`). Reset it with
-  `openstack user set --password "$(cat …/credentials/aleph0-api)" aleph0-api`.
+  file, but Keystone keeps the old password (`update_password: on_create`). With `OS_CLOUD`
+  and `OS_CLIENT_CONFIG_FILE` set as in [Reaching OpenStack from WSL](#reaching-openstack-from-wsl),
+  reset it with
+  `openstack user set --password "$(cat deploy/kolla/dev/credentials/aleph0-api)" aleph0-api`.
 - **An old `/usr/local/bin/cephadm` regular file** (from before the versioned binaries) makes
   the link task fail: delete it and rerun.
-- **A removed physical node that was unreachable** keeps its Kolla containers: run
-  `$KA destroy --yes-i-really-really-mean-it --limit <node>` (the `KA` above) once it
-  answers, or it may rejoin after a reboot.
+- **A removed physical node that was unreachable** keeps its Kolla containers, and may rejoin
+  after a reboot. `node-remove` says so and finishes the rest. Keep the node in the node file
+  (and do not run `infra-apply`, which would add it back) until it answers and you have run
+  `ka destroy --yes-i-really-really-mean-it --limit <node>` (the `ka` function and the
+  `export`s from [Removing a node](#removing-a-node)); then delete the entry.
 - **VMs were forced off, or WSL died without `infra-stop`:** run `make infra-start`. It runs
   `mariadb-recovery` itself when the OpenStack API does not come back, and it clears Neutron's
   stale `/tmp/neutron_start_time*` file, which otherwise stops `neutron_server` from registering
   again after a restart.
 - **`infra-start` says "Ceph is not up yet":** the monitors were not in quorum within 10
-  minutes. Rerun it.
+  minutes. Rerun it. (Ceph up but not `HEALTH_OK` after 10 minutes is only a warning.)
 
 ## Reaching OpenStack from WSL
 
@@ -155,6 +171,13 @@ emergency admin (not federated), password `keystone_admin_password` in
 
 ## Generated files
 
-`deploy/kolla/<env>/` holds `passwords.yml`, `clouds.yaml`, `credentials/`, the Ceph keys in
-`config/` and `pending.env`. They are gitignored; only `globals.yml` is committed.
-Each node records its deployed roles in `/etc/aleph0/roles`.
+`deploy/kolla/<env>/` holds, all gitignored (only `globals.yml` is committed):
+
+- `passwords.yml`, `clouds.yaml`, `credentials/`, `pending.env`
+- the Ceph keys and `ceph.conf` in `config/`
+- `admin-openrc*.sh` and `public-openrc*.sh`, written by Kolla's `post-deploy`
+- `cirros-*.img`, the downloaded CirrOS image
+- `remove-<node>.tfplan`, only while `node-remove` runs
+
+Each node records its deployed roles in `/etc/aleph0/roles`. Terraform's state (one workspace
+per env) lives in `deploy/terraform/terraform.tfstate.d/`, outside `deploy/kolla/`.

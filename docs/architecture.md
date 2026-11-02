@@ -223,6 +223,9 @@ openstack_service_rpc_workers: "1"                # dev only
 kolla_test_images: "yes"                          # dev only: Kolla's prebuilt quay.io images
 ```
 
+Kolla's RGW integration (`enable_ceph_rgw: "no"`) waits for the S3 step, so the public
+`s3.<domain>` from section 2 is not wired yet; Ceph runs RGW itself in the meantime.
+
 Versions: Ceph is pinned to 20.2.0 to match the Ceph client libraries inside Kolla's 2026.2
 images. 20.2.4 monitors require the `aes256k` cephx cipher, which those clients cannot read, so
 upgrade Ceph together with Kolla's images. 20.2.0 lacks 20.2.4's cephx security fix.
