@@ -44,9 +44,16 @@
     - name: Compute
       when: "'compute' in removing"
       block:
+        # A rerun after an interruption may find the service already deleted.
+        - name: Find the node's compute service
+          ansible.builtin.command: openstack compute service list --host {{ node }} --service nova-compute -f value -c ID
+          register: compute_service
+          changed_when: false
+
         - name: Stop scheduling new servers on the node
           ansible.builtin.command: openstack compute service set --disable {{ node }} nova-compute
           changed_when: true
+          when: compute_service.stdout_lines | length > 0
 
         - name: List servers still on the node
           ansible.builtin.command: openstack server list --all-projects --host {{ node }} -f value -c ID
@@ -90,21 +97,38 @@
       delegate_to: "{{ groups['role_control'][0] }}"
       become: true
       block:
-        - name: Drain the node's Ceph daemons and data
-          ansible.builtin.command: cephadm shell -- ceph orch host drain {{ node }}
-          changed_when: true
-
-        - name: Wait until no Ceph daemons are left on the node
-          ansible.builtin.command: cephadm shell -- ceph orch ps {{ node }} -f json
-          register: daemons
+        # A rerun after an interruption may find the host already gone from Ceph.
+        - name: List the hosts Ceph knows
+          ansible.builtin.command: cephadm shell -- ceph orch host ls -f json
+          register: ceph_hosts
           changed_when: false
-          retries: 90
-          delay: 20
-          until: daemons.stdout is search('No daemons') or (daemons.stdout | from_json | length == 0)
 
-        - name: Remove the node from Ceph
-          ansible.builtin.command: cephadm shell -- ceph orch host rm {{ node }}
-          changed_when: true
+        - name: Drain and remove the host
+          when: node in (ceph_hosts.stdout | from_json | map(attribute='hostname'))
+          block:
+            # cephadm refuses to drain a host that a service spec names, and says so with exit code 0.
+            # Removing an OSD spec leaves its OSDs running; the next apply re-creates the spec from the file.
+            - name: Drop the node's OSD spec
+              ansible.builtin.command: cephadm shell -- ceph orch rm osd.{{ node }} --force
+              changed_when: true
+
+            - name: Drain the node's Ceph daemons and data
+              ansible.builtin.command: cephadm shell -- ceph orch host drain {{ node }}
+              register: drain
+              changed_when: true
+              failed_when: drain.rc != 0 or (drain.stdout + drain.stderr) is search('explicitly listed')
+
+            - name: Wait until no Ceph daemons are left on the node
+              ansible.builtin.command: cephadm shell -- ceph orch ps {{ node }} -f json
+              register: daemons
+              changed_when: false
+              retries: 90
+              delay: 20
+              until: daemons.stdout is search('No daemons') or (daemons.stdout | from_json | length == 0)
+
+            - name: Remove the node from Ceph
+              ansible.builtin.command: cephadm shell -- ceph orch host rm {{ node }}
+              changed_when: true
 
     - name: Delete the node's marker
       ansible.builtin.file:
