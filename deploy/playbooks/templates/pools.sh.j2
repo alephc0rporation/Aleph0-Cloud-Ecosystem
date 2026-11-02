@@ -4,6 +4,9 @@ set -euo pipefail
 {% if ceph_osd_memory_target is defined %}
 ceph config set osd osd_memory_target {{ ceph_osd_memory_target }}
 {% endif %}
+{% if ceph_mon_max_pg_per_osd is defined %}
+ceph config set global mon_max_pg_per_osd {{ ceph_mon_max_pg_per_osd }}
+{% endif %}
 {% if ceph_pool_size | int == 1 %}
 ceph config set global mon_allow_pool_size_one true
 {% endif %}

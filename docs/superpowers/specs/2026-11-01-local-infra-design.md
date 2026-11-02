@@ -71,6 +71,7 @@ all:
     ceph_pool_size: 3
     ceph_devices: [/dev/vdb]
     ceph_osd_memory_target: 1610612736 # dev only: 1.5 GB per OSD
+    ceph_mon_max_pg_per_osd: 400       # dev only: one OSD per node
   hosts:
     node1:
       ansible_host: 10.10.0.11
