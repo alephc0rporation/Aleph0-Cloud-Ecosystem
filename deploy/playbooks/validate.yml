@@ -10,6 +10,22 @@
         that: groups['all'] | difference(['localhost']) | length > 0
         fail_msg: "the node file lists no nodes"
 
+# Ceph is run from the first controller in the file, and ceph.yml bootstraps it there when that
+# controller has no Ceph yet: a new controller put above the bootstrap host would get a second
+# Ceph cluster. Only the bootstrap host has /etc/ceph/ceph.pub. A play of its own: in a loop, an
+# unreachable item fails the task even with ignore_unreachable.
+- name: Find the Ceph bootstrap host
+  hosts: role_control
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Look for /etc/ceph/ceph.pub
+      ansible.builtin.stat:
+        path: /etc/ceph/ceph.pub
+      register: ceph_pub
+      ignore_unreachable: true   # a new controller may not exist yet
+      when: cluster_dir is defined
+
 - name: Validate the node file
   hosts: all:!localhost
   gather_facts: false
@@ -55,18 +71,6 @@
       run_once: true
       when: cluster_dir is defined
       block:
-        # Ceph is run from the first controller in the file, and ceph.yml bootstraps it there when
-        # that controller has no Ceph yet: a new controller put above the bootstrap host would get
-        # a second Ceph cluster. Only the bootstrap host has /etc/ceph/ceph.pub.
-        - name: Look for the Ceph bootstrap host among the controllers
-          ansible.builtin.stat:
-            path: /etc/ceph/ceph.pub
-          delegate_to: "{{ item }}"
-          become: true
-          loop: "{{ groups['role_control'] }}"
-          register: ceph_pub
-          ignore_unreachable: true   # a new controller may not exist yet
-
         - name: The Ceph bootstrap host is the first controller
           ansible.builtin.assert:
             that: bootstrap_hosts | length == 0 or groups['role_control'][0] in bootstrap_hosts
@@ -74,7 +78,9 @@
               Ceph runs from {{ bootstrap_hosts | first }}: keep it first among the controllers
               in the node file (it is {{ groups['role_control'][0] }} now)
           vars:
-            bootstrap_hosts: "{{ ceph_pub.results | selectattr('stat', 'defined') | selectattr('stat.exists') | map(attribute='item') | list }}"
+            bootstrap_hosts: >-
+              {{ groups['role_control'] | map('extract', hostvars) | selectattr('ceph_pub.stat', 'defined')
+              | selectattr('ceph_pub.stat.exists') | map(attribute='inventory_hostname') | list }}
 
         - name: Look for the admin clouds.yaml
           ansible.builtin.stat:
