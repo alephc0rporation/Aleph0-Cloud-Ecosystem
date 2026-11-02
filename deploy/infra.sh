@@ -38,6 +38,17 @@ aleph0_vms() {
   names=$(virsh list --name "$@") || { echo "virsh cannot reach libvirt (qemu:///system); is libvirtd running?" >&2; exit 1; }
   grep '^aleph0-' <<<"$names" || true
 }
+# Against stopped dev VMs, apply, remove and reconfigure would fail later with raw SSH errors.
+vms_up() {
+  local stopped
+  if [[ $env == dev ]] && has_vms; then
+    stopped=$(aleph0_vms --inactive)
+    if [[ -n $stopped ]]; then
+      echo "dev VMs are stopped: run make infra-start first" >&2
+      exit 1
+    fi
+  fi
+}
 # The timeout keeps a call short while the monitors are not in quorum, so callers can retry.
 ceph_admin() { ansible "${inv[@]}" 'role_control[0]' -b -m command -a "cephadm shell -- ceph --connect-timeout 30 $*"; }
 api_up() {
@@ -91,6 +102,7 @@ machines() {
 }
 
 apply() {
+  vms_up
   play validate.yml
   machines
   play hosts.yml
@@ -135,6 +147,7 @@ apply() {
 remove() {
   local node=${1:?usage: infra.sh remove <env> <node>}
   local rest plan=$cluster_dir/remove-$node.tfplan skipped=
+  vms_up
   if has_vms; then
     # Plan the Terraform change first, before anything touches the node, and refuse unless it only
     # deletes resources of this node. Apply the node file without the node: a targeted destroy would
@@ -291,7 +304,7 @@ case $cmd in
   destroy) destroy ;;
   stop) stop ;;
   start) start ;;
-  reconfigure) ka reconfigure ${3:+--tags "$3"} ;;
+  reconfigure) vms_up; ka reconfigure ${3:+--tags "$3"} ;;
   test) run_tests ;;
   *) echo "unknown command: $cmd" >&2; exit 2 ;;
 esac
