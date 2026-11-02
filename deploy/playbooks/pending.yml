@@ -1,9 +1,13 @@
 # A node is pending when its marker (/etc/aleph0/roles, written by markers.yml after a
-# successful deploy) is missing or lists other roles than the node file.
+# successful deploy) is missing or lists other roles than the node file. A role the marker has
+# and the file dropped stops the run: its services would keep running (a storage node its OSD).
 - name: Read the markers
   hosts: all:!localhost
   gather_facts: false
   become: true
+  any_errors_fatal: true
+  vars:
+    deployed: "{{ marker.content | b64decode | from_json if marker.content is defined else [] }}"
   tasks:
     - name: Read /etc/aleph0/roles
       ansible.builtin.slurp:
@@ -11,9 +15,17 @@
       register: marker
       failed_when: false
 
+    - name: No role was dropped
+      ansible.builtin.assert:
+        that: deployed | difference(node_roles) | length == 0
+        fail_msg: >-
+          {{ inventory_hostname }} runs {{ deployed | difference(node_roles) | join(', ') }}, which the
+          node file dropped. Dropping a role is not supported: put it back, or remove the node
+          (make node-remove) and add it back with its new roles.
+
     - name: Compare with the node file
       ansible.builtin.set_fact:
-        pending: "{{ marker.content is not defined or (marker.content | b64decode | from_json) != (node_roles | sort) }}"
+        pending: "{{ marker.content is not defined or deployed != (node_roles | sort) }}"
 
 - name: Write pending.env
   hosts: localhost
