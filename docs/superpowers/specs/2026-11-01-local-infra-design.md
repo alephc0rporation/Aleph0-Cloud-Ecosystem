@@ -160,7 +160,8 @@ Ceph belongs on the controllers. The `role_` prefix keeps the two apart.
   host that `ceph orch host ls` or `openstack network agent list` knows and the file does not
   stops the run (every compute and network node runs an OVN agent; every controller is a Ceph
   host): "nodeX: still part of the cluster: run `make node-remove ENV=<env>
-  NODE=nodeX`, or put it back in the file."
+  NODE=nodeX`, or put it back in the file." When the first controller has no `cephadm` yet
+  (before Ceph's first run, or while Ceph is rebuilt), it skips Ceph's hosts and says so.
 
 The internal API address is the dedicated VIP with HAProxy + keepalived from day one
 (`enable_haproxy: yes`), so endpoints and the API's `OS_AUTH_URL` do not move when controllers
@@ -199,7 +200,8 @@ and adds roles:
    - fetch `ceph.conf` + keyrings into `deploy/kolla/<env>/config/` in Kolla's external-Ceph
      layout, plus `glance.conf` with `show_image_direct_url = True`.
 7. **Kolla**, with `--configdir deploy/kolla/<env>` and `--passwords` there: `kolla-genpwd`
-   once, `prechecks` and `pull` with the step-5 limit, `deploy` with that limit, or on **all**
+   once, `prechecks` and `pull` with the step-5 limit (`pull` up to 3 attempts: quay.io resets
+   connections mid-download), `deploy` with that limit, or on **all**
    nodes when `PENDING_CONTROL=yes`; `post-deploy` while `clouds.yaml` is missing.
 8. **OpenStack init** (`playbooks/openstack-init.yml`, `openstack.cloud` modules, idempotent):
    external network `public` (flat, `physnet1`) with subnet 10.30.0.0/24, gateway .1, pool
@@ -241,6 +243,42 @@ what the file says.
 `terraform destroy` in the `dev` workspace, then delete everything in `deploy/kolla/dev/` except
 `globals.yml`. Refuses any other env.
 
+## `make infra-stop ENV=dev`
+
+`deploy/infra.sh stop dev` frees the dev VMs' RAM. Refuses any other env.
+
+1. `ceph osd set noout`, so Ceph does not re-replicate while every node is down (if Ceph does
+   not answer, it says so and goes on).
+2. `virsh shutdown` of every running `aleph0-*` domain; wait up to 5 minutes, then
+   `virsh destroy` the ones still running.
+
+## `make infra-start ENV=dev`
+
+`deploy/infra.sh start dev`. Refuses any other env.
+
+1. `virsh start` every stopped `aleph0-*` domain; `playbooks/hosts.yml` waits for SSH.
+2. `ceph osd unset noout`; wait up to 10 minutes for `HEALTH_OK`, then print Ceph's health.
+3. With `clouds.yaml` present, `playbooks/start.yml`:
+   - on the controllers, wait until `mariadb`, `proxysql` and `rabbitmq` are healthy;
+   - on every node, restart the Kolla containers (label `kolla_version`; cephadm's are never
+     touched) that are `unhealthy` or `exited`, after their health checks settle, in up to
+     3 rounds. API containers that started before MariaDB answered stay unhealthy, because
+     uwsgi does not retry. Before `neutron_server` is restarted, its `/tmp/neutron_start_time*`
+     is deleted: Neutron keys the WSGI start time on the uwsgi PID and `/tmp` survives a
+     restart, so when the PIDs repeat (often, in a container) the old time comes back, the
+     previous run's `ovn_hash_ring` row stays, and registering again fails with a duplicate key;
+   - wait until every compute service, network agent and volume service is up (each list also
+     needs a token).
+4. If `start.yml` fails and `openstack token issue` does not answer for 5 minutes:
+   `kolla-ansible mariadb-recovery`, then `start.yml` again.
+5. Print: servers inside OpenStack come back `SHUTOFF`; `openstack server start <name>`.
+
+## `make infra-reconfigure ENV=<env> [TAGS=a,b]`
+
+`deploy/infra.sh reconfigure <env> [tags]`: `kolla-ansible reconfigure`, with `--tags` when
+given. `infra-apply` runs Kolla only for pending nodes, so changes to `globals.yml` or rebuilt
+Ceph keys reach a running cluster this way.
+
 ## Makefile
 
 ```make
@@ -249,6 +287,9 @@ infra-apply:   deploy/.venv/.done   # deploy/infra.sh apply $(ENV)
 node-remove:   deploy/.venv/.done   # deploy/infra.sh remove $(ENV) $(NODE)
 infra-destroy:                      # deploy/infra.sh destroy $(ENV)
 infra-test:    deploy/.venv/.done   # deploy/infra.sh test $(ENV)
+infra-stop:    deploy/.venv/.done   # deploy/infra.sh stop $(ENV)
+infra-start:   deploy/.venv/.done   # deploy/infra.sh start $(ENV)
+infra-reconfigure: deploy/.venv/.done  # deploy/infra.sh reconfigure $(ENV) $(TAGS)
 ```
 
 `deploy/.venv/.done` is written after the last install step, so a failed install runs again.

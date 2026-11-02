@@ -68,13 +68,26 @@
           changed_when: false
           when: clouds.stat.exists
 
+        # ceph.yml installs it; it is missing before Ceph's first run or while Ceph is rebuilt.
+        - name: Look for cephadm on the first controller
+          ansible.builtin.stat:
+            path: /usr/local/bin/cephadm
+          delegate_to: "{{ groups['role_control'][0] }}"
+          register: cephadm
+          when: clouds.stat.exists
+
+        - name: Skip Ceph's hosts without cephadm
+          ansible.builtin.debug:
+            msg: "{{ groups['role_control'][0] }} has no cephadm: the orphan check skips Ceph's hosts"
+          when: clouds.stat.exists and not cephadm.stat.exists
+
         - name: Hosts Ceph knows
           ansible.builtin.command: cephadm shell -- ceph orch host ls --format json
           delegate_to: "{{ groups['role_control'][0] }}"
           become: true
           register: ceph_hosts
           changed_when: false
-          when: clouds.stat.exists
+          when: clouds.stat.exists and cephadm.stat.exists
 
         - name: No node left the file without node-remove
           ansible.builtin.assert:
@@ -83,5 +96,6 @@
               {{ orphans | join(', ') }}: still part of the cluster: run
               make node-remove ENV={{ cluster_env }} NODE=<name>, or put it back in the file
           vars:
-            orphans: "{{ (agent_hosts.stdout_lines + (ceph_hosts.stdout | from_json | map(attribute='hostname') | list)) | unique | difference(nodes) }}"
+            ceph_names: "{{ ceph_hosts.stdout | from_json | map(attribute='hostname') | list if ceph_hosts is not skipped else [] }}"
+            orphans: "{{ (agent_hosts.stdout_lines + ceph_names) | unique | difference(nodes) }}"
           when: clouds.stat.exists

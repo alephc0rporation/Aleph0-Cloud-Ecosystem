@@ -69,3 +69,16 @@ infra-destroy:
 .PHONY: node-remove
 node-remove: deploy/.venv/.done
 	deploy/infra.sh remove $(ENV) $(NODE)
+
+# Free the dev VMs' RAM, and bring them back.
+.PHONY: infra-stop infra-start
+infra-stop: deploy/.venv/.done
+	deploy/infra.sh stop $(ENV)
+
+infra-start: deploy/.venv/.done
+	deploy/infra.sh start $(ENV)
+
+# Apply globals.yml or Ceph key changes to a running cluster. TAGS=glance,cinder limits it.
+.PHONY: infra-reconfigure
+infra-reconfigure: deploy/.venv/.done
+	deploy/infra.sh reconfigure $(ENV) $(TAGS)

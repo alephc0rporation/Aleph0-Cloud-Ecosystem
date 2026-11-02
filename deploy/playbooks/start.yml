@@ -1,0 +1,74 @@
+# Brings OpenStack back after `infra.sh start` boots the nodes. Kolla's systemd units start every
+# container at boot, but the API containers that come up before MariaDB answers stay unhealthy
+# (uwsgi does not retry), so they are restarted once the databases are healthy.
+- name: Wait for the databases and the message queue
+  hosts: role_control
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Wait until mariadb, proxysql and rabbitmq are healthy
+      ansible.builtin.command: docker ps --quiet --filter name=^{{ item }}$ --filter health=healthy
+      register: healthy
+      changed_when: false
+      until: healthy.stdout != ''
+      retries: 60
+      delay: 10
+      loop: [mariadb, proxysql, rabbitmq]
+
+- name: Restart the Kolla containers that did not come up
+  hosts: all:!localhost
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Restart unhealthy or exited Kolla containers, in up to 3 rounds
+      ansible.builtin.shell:
+        executable: /bin/bash
+        cmd: |
+          set -euo pipefail
+          # Kolla's containers carry the kolla_version label; cephadm's do not and are never touched.
+          kolla() { docker ps --all --filter label=kolla_version "$@" | awk 'NR > 1 { print $NF }'; }
+          for round in 1 2 3 4; do
+            # A container stays "starting" until its first health check passes or three fail.
+            for _ in $(seq 30); do
+              [[ -z $(kolla --filter health=starting) ]] && break
+              sleep 10
+            done
+            bad=$( (kolla --filter health=unhealthy; kolla --filter status=exited) | sort -u | xargs)
+            if [[ -z $bad ]]; then exit 0; fi
+            if [[ $round == 4 ]]; then echo "still not healthy after 3 restarts: $bad" >&2; exit 1; fi
+            # neutron-server keeps its start time in /tmp/neutron_start_time<uwsgi PID>, and /tmp survives
+            # a restart. When the PIDs repeat (they are small and often the same), the old time comes back,
+            # Neutron keeps the previous run's ovn_hash_ring row and registering again fails with a
+            # duplicate key. Without the file it takes a new time and drops the old row itself.
+            if [[ " $bad " == *" neutron_server "* ]]; then
+              docker exec neutron_server sh -c 'rm -f /tmp/neutron_start_time*' || true
+            fi
+            echo "round $round: restarting $bad"
+            docker restart $bad >/dev/null
+          done
+      register: restarts
+      changed_when: restarts.stdout != ''
+
+    - name: Show what was restarted
+      ansible.builtin.debug:
+        var: restarts.stdout_lines
+      when: restarts is changed
+
+- name: Check that every OpenStack service is up
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    # Each list authenticates first, so this also checks that a token is issued.
+    - name: Every compute service, network agent and volume service is up
+      ansible.builtin.command: openstack {{ item.list }} -f json
+      register: services
+      changed_when: false
+      until: services.rc == 0 and (services.stdout | from_json | selectattr(item.field, 'ne', item.up) | list | length == 0)
+      retries: 30
+      delay: 10
+      loop:
+        - { list: compute service list, field: State, up: up }
+        - { list: network agent list, field: Alive, up: true }
+        - { list: volume service list, field: State, up: up }
+      loop_control:
+        label: "{{ item.list }}"

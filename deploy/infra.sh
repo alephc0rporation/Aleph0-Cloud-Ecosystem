@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Builds and changes the OpenStack + Ceph cluster described by deploy/nodes/<env>.yml.
-# Usage: infra.sh apply|remove|destroy|test <env> [node]
+# Usage: infra.sh apply|remove|destroy|stop|start|reconfigure|test <env> [node|tags]
 set -euo pipefail
 cd "$(dirname "$0")"
 
-cmd=${1:?usage: infra.sh apply|remove|destroy|test <env> [node]}
+cmd=${1:?usage: infra.sh apply|remove|destroy|stop|start|reconfigure|test <env> [node|tags]}
 env=${2:-dev}
 nodes=nodes/$env.yml
 cluster_dir=$PWD/kolla/$env
@@ -24,6 +24,23 @@ inv=(-i "$nodes" -i nodes/roles.yml -i kolla/services.ini)
 play() { ansible-playbook "${inv[@]}" -e "cluster_env=$env cluster_dir=$cluster_dir" "playbooks/$1" "${@:2}"; }
 tf() { (cd terraform && terraform "$@"); }
 has_vms() { grep -q '^ *vm:' "$nodes"; }
+dev_only() {
+  if [[ $env != dev ]]; then
+    echo "$1 only runs for dev" >&2
+    exit 1
+  fi
+}
+virsh() { command virsh -c qemu:///system "$@"; }
+vms_running() { virsh list --name | grep '^aleph0-' || true; }
+ceph_admin() { ansible "${inv[@]}" 'role_control[0]' -b -m command -a "cephadm shell -- ceph $*"; }
+api_up() {
+  local _
+  for _ in $(seq 30); do
+    openstack token issue -f value -c id >/dev/null 2>&1 && return 0
+    sleep 10
+  done
+  return 1
+}
 ka() { kolla-ansible "$1" "${inv[@]}" --configdir "$cluster_dir" --passwords "$cluster_dir/passwords.yml" "${@:2}"; }
 
 passwords() {
@@ -58,7 +75,11 @@ apply() {
   play ceph.yml   # every run, so ceph_pool_size and spec changes apply even when no node changed
   if [[ -n $PENDING ]]; then
     ka prechecks --limit "$limit"
-    ka pull --limit "$limit"
+    for attempt in 1 2 3; do   # quay.io resets connections mid-download from the VMs
+      echo "kolla-ansible pull, attempt $attempt of 3"
+      ka pull --limit "$limit" && break
+      [[ $attempt == 3 ]] && exit 1
+    done
     if [[ $PENDING_CONTROL == yes ]]; then
       ka deploy   # HAProxy, Galera, RabbitMQ and the OVN databases must learn the new controller
     else
@@ -112,14 +133,52 @@ if other:
 }
 
 destroy() {
-  if [[ $env != dev ]]; then
-    echo "infra-destroy only runs for dev" >&2
-    exit 1
-  fi
+  dev_only infra-destroy
   tf init -input=false >/dev/null
   tf workspace select -or-create dev
   tf destroy -input=false -auto-approve -var "nodes_file=$PWD/$nodes"
   find "$cluster_dir" -mindepth 1 -maxdepth 1 ! -name globals.yml -exec rm -rf {} +
+}
+
+stop() {
+  dev_only infra-stop
+  # Every node goes down at once: Ceph must not start re-replicating data meanwhile.
+  ceph_admin osd set noout || echo "Ceph did not answer; stopping anyway." >&2
+  local d _
+  for d in $(vms_running); do virsh shutdown "$d" >/dev/null; done
+  for _ in $(seq 60); do
+    if [[ -z $(vms_running) ]]; then
+      echo "All aleph0 VMs are off."
+      return
+    fi
+    sleep 5
+  done
+  echo "VMs still running after 5 minutes; forcing them off: $(vms_running | xargs)" >&2
+  for d in $(vms_running); do virsh destroy "$d" >/dev/null; done
+}
+
+start() {
+  dev_only infra-start
+  local d _
+  for d in $(virsh list --inactive --name | grep '^aleph0-' || true); do virsh start "$d" >/dev/null; done
+  play hosts.yml
+  ceph_admin osd unset noout
+  for _ in $(seq 60); do
+    [[ $(ceph_admin health) == *HEALTH_OK* ]] && break   # not grep -q: under pipefail its SIGPIPE fails the check
+    sleep 10
+  done
+  ceph_admin health
+  # start.yml restarts the containers that came up before MariaDB and checks every service.
+  if [[ -f $cluster_dir/clouds.yaml ]] && ! play start.yml; then
+    if api_up; then
+      echo "The OpenStack API answers, so MariaDB is fine; see the failed task above." >&2
+      exit 1
+    fi
+    echo "OpenStack API is not answering; recovering MariaDB." >&2
+    ka mariadb-recovery
+    play start.yml
+  fi
+  echo "Cluster is up. Servers inside OpenStack come back SHUTOFF: openstack server start <name>."
 }
 
 # Each bad fixture must be rejected by its own rule: <fixture>:<text of that rule's message>.
@@ -151,6 +210,9 @@ case $cmd in
   apply) apply ;;
   remove) remove "${3:-}" ;;
   destroy) destroy ;;
+  stop) stop ;;
+  start) start ;;
+  reconfigure) ka reconfigure ${3:+--tags "$3"} ;;
   test) run_tests ;;
   *) echo "unknown command: $cmd" >&2; exit 2 ;;
 esac
