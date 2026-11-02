@@ -71,11 +71,13 @@
       run_once: true
       when: cluster_dir is defined
       block:
+        # fail_msg is templated even when the assert passes, so it must not index an empty list:
+        # before the first apply no controller has Ceph. role_control is never empty here.
         - name: The Ceph bootstrap host is the first controller
           ansible.builtin.assert:
             that: bootstrap_hosts | length == 0 or groups['role_control'][0] in bootstrap_hosts
             fail_msg: >-
-              Ceph runs from {{ bootstrap_hosts | first }}: keep it first among the controllers
+              Ceph runs from {{ bootstrap_hosts | join(', ') }}: keep it first among the controllers
               in the node file (it is {{ groups['role_control'][0] }} now)
           vars:
             bootstrap_hosts: >-

@@ -359,6 +359,9 @@ and `kvm` groups; Terraform 1.17.1 in `/usr/local/bin`; an SSH key at `~/.ssh/id
 - `ansible-playbook playbooks/validate.yml` against `nodes/testdata/valid.yml` passes, and
   against `two-controllers.yml`, `no-network.yml`, `too-few-storage.yml`, `unknown-role.yml`, `empty.yml`
   fails. The checks against an existing cluster are skipped because no `cluster_dir` is passed.
+- `fresh-cluster.yml` passes with `cluster_dir` set to a folder without `clouds.yaml` while its
+  controller does not answer (`ANSIBLE_TIMEOUT=5`): the state of a first `infra-apply`, so the
+  Ceph bootstrap host check runs with no controller having Ceph.
 - The Terraform plan check on canned `terraform show -json` plans, one allowed and one refused
   for each rule: for `infra-apply` a create passes and a replace is refused; for removing node3
   deleting node3's volume passes and deleting it plus creating node4 is refused.

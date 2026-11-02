@@ -1,0 +1,10 @@
+# Before the first apply: the controller does not answer yet (nothing listens on port 1).
+all:
+  vars:
+    ceph_pool_size: 1
+  hosts:
+    node1:
+      ansible_host: 127.0.0.1
+      ansible_port: 1
+      storage_ip: 10.20.0.11
+      node_roles: [control, network, compute, storage]

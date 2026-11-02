@@ -268,6 +268,15 @@ start() {
 run_tests() {
   ansible-playbook -i nodes/testdata/valid.yml -i nodes/roles.yml playbooks/validate.yml
   local t f msg out
+  # With cluster_dir set, the checks against an existing cluster run; a first apply has no
+  # cluster yet: no controller answers and there is no clouds.yaml.
+  if ! out=$(ANSIBLE_TIMEOUT=5 ansible-playbook -i nodes/testdata/fresh-cluster.yml -i nodes/roles.yml \
+               -e cluster_dir="$PWD/nodes/testdata/no-cluster" playbooks/validate.yml 2>&1); then
+    echo "FAIL: nodes/testdata/fresh-cluster.yml failed validation before the first apply:" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "ok: nodes/testdata/fresh-cluster.yml passes before the first apply"
   for t in "two-controllers:use 1, 3 or 5" \
            "no-network:no node has the network role" \
            "too-few-storage:1 storage hosts for ceph_pool_size 2" \
