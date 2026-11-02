@@ -33,7 +33,7 @@ Included by default: scheduled backups (snapshots), basic per-VM metrics, per-or
 └───────────────────┬────────────────────────────┘
                     │ site-to-site VPN
 ┌───────────────────▼────────────────────────────┐
-│ Own infrastructure — 3 nodes                   │
+│ Own infrastructure — N nodes (3 at launch)     │
 │  • OpenStack (Kolla-Ansible)                   │
 │  • Ceph (cephadm)                              │
 └────────────────────────────────────────────────┘
@@ -73,8 +73,10 @@ The dev machine is a Windows 11 PC; all development happens in **WSL2 (Ubuntu)**
 in the WSL filesystem (`~/projects/`), not under `/mnt/c`. Kolla-Ansible and Terraform with
 libvirt need Linux, and CI and production are Linux too.
 
-Three VMs, running on libvirt/KVM inside WSL2, mimic the three physical nodes. Same Kolla-Ansible
-configuration as production; only IPs, disks and the HA level differ.
+The cluster is described by a node file (`deploy/nodes/<env>.yml`): each node has roles
+(`control`, `network`, `compute`, `storage`), and nodes can be added or removed while the
+cluster runs. In dev, nodes are libvirt/KVM VMs inside WSL2; in production, the same scripts
+run against physical machines. See `deploy/README.md`.
 
 ### Host requirements
 
@@ -88,28 +90,35 @@ configuration as production; only IPs, disks and the HA level differ.
 cat /sys/module/kvm_intel/parameters/nested   # or kvm_amd
 ```
 
-### Dev VMs
+### Dev nodes
 
-Smaller than production; enough for CirrOS test VMs.
+The default `deploy/nodes/dev.yml`; edit it to change the layout.
 
-| Node | Role | vCPU | RAM | Disks |
+| Node | Roles | vCPU | RAM | Disks |
 |---|---|---|---|---|
-| node1 | control + network + compute + Ceph | 4 | ~8 GB | 40 GB system + 50 GB Ceph |
-| node2 | compute + Ceph | 4 | ~4 GB | 40 GB system + 50 GB Ceph |
-| node3 | compute + Ceph | 4 | ~4 GB | 40 GB system + 50 GB Ceph |
+| node1 | control, network, compute, storage | 4 | 10 GB | 40 GB system + 50 GB Ceph |
+| node2 | compute, storage | 4 | 4 GB | 40 GB system + 50 GB Ceph |
+| node3 | compute, storage | 4 | 4 GB | 40 GB system + 50 GB Ceph |
 
-- CPU mode: `host-passthrough`
-- 3 virtual networks: management, storage, external (tenant traffic uses management in dev)
+- Ubuntu 24.04 nodes, CPU mode `host-passthrough`
+- Networks: management 10.10.0.0/24 (API VIP 10.10.0.10), storage 10.20.0.0/24, external
+  10.30.0.0/24 (floating IPs .100–.199)
 - Tenant VMs run at the third nesting level (Windows → WSL2 → node → VM), so dev uses
   `nova_compute_virt_type: qemu`
+- node1 fits in 10 GB because dev runs one worker per OpenStack service
+  (`openstack_service_workers` and `openstack_service_rpc_workers` = 1) and VM nodes get a 2 GB
+  swap file; Ceph OSDs are capped with `ceph_osd_memory_target` (1.5 GB)
+- With one OSD per node, the default pools exceed Ceph's 250 PGs per OSD and the cluster sits in
+  `HEALTH_WARN`, so dev sets `ceph_mon_max_pg_per_osd: 400`
 - Horizon is disabled (we have our own portal); Octavia is enabled with the load balancer step
 
 ### Dev vs production
 
 | | Dev | Production |
 |---|---|---|
-| Control nodes | 1 (no HA) | 3 (HA: HAProxy + keepalived, Galera, RabbitMQ cluster) |
+| Control nodes | 1, behind a VIP (HAProxy + keepalived) | 3 or more, odd (HA: HAProxy + keepalived, Galera, RabbitMQ cluster) |
 | Ceph `osd_memory_target` | ~1.5 GB | default (4 GB) |
+| OpenStack images | Kolla's prebuilt quay.io test images | our own build |
 | Networks | virtual bridges / VLANs | separate physical interfaces, storage ≥ 10 GbE |
 | Keycloak, PostgreSQL | local, `docker compose` | GCP |
 | Nova virt type | `qemu` | `kvm` |
@@ -122,7 +131,7 @@ Smaller than production; enough for CirrOS test VMs.
 |---|---|
 | Terraform (`libvirt` provider) | creating the dev VMs |
 | cephadm | installing Ceph |
-| Kolla-Ansible + Ansible | installing OpenStack |
+| Kolla-Ansible + Ansible | installing OpenStack; our playbooks prepare hosts, Ceph and the initial resources |
 | OpenStack CLI (`python-openstackclient`) | initial setup and debugging |
 | Docker + Docker Compose | local Keycloak and PostgreSQL |
 | Go | backend; `oapi-codegen` (and later `goose`, `sqlc`) pinned as `go tool` entries in `api/go.mod` |
@@ -164,9 +173,11 @@ Folders are created by the issue that first needs them.
 ├── deploy/
 │   ├── postgres/            # local DB init
 │   ├── keycloak/            # exported realm
-│   ├── terraform/           # dev VMs
-│   ├── ceph/
-│   └── kolla/{dev,prod}/    # inventory + globals.yml
+│   ├── infra.sh             # apply | remove | destroy | stop | start | reconfigure | test
+│   ├── nodes/               # node files (one per env) + role groups
+│   ├── playbooks/           # hosts, Ceph, OpenStack init, node removal, start
+│   ├── terraform/           # dev VMs from the node file
+│   └── kolla/               # services.ini + <env>/globals.yml
 │
 └── docs/architecture.md
 ```
@@ -181,96 +192,47 @@ there is client-side UI state to share.
 
 ## 6. Getting started (dev)
 
-The app stack (portal, API, Keycloak, PostgreSQL) is described in `README.md`. The infrastructure
-steps below belong to issue #2.
+The app stack (portal, API, Keycloak, PostgreSQL) is described in `README.md`, the
+infrastructure in `deploy/README.md`.
 
-### 6.1 VMs
-
-```bash
-cd deploy/terraform
-terraform init && terraform apply
-```
-
-On all nodes: same OS (Ubuntu LTS), NTP in sync, resolvable hostnames (DNS or `/etc/hosts`),
-key-based SSH access from the deploy machine.
-
-### 6.2 Ceph
+### 6.1 Infrastructure
 
 ```bash
-# on node1
-cephadm bootstrap --mon-ip <NODE1_STORAGE_IP>
-
-# add nodes
-ceph orch host add node2 <NODE2_IP>
-ceph orch host add node3 <NODE3_IP>
-
-# OSDs on every free disk
-ceph orch apply osd --all-available-devices
-
-# pools for OpenStack
-for p in volumes images vms backups; do
-  ceph osd pool create $p
-  rbd pool init $p
-done
-
-# dev only: less memory for OSDs
-ceph config set osd osd_memory_target 1610612736
-
-# S3
-ceph orch apply rgw default --placement="1 node1"
+make infra-apply      # VMs, Ceph, OpenStack and the initial resources, from deploy/nodes/dev.yml
+make infra-stop       # shut the dev VMs down and free most of their RAM
+make infra-start      # bring them back, and repair what a boot leaves broken
+make infra-destroy    # wipe the dev cluster
 ```
 
-Then: Ceph users (`client.glance`, `client.cinder`, `client.nova`) and copy `ceph.conf` + keyrings
-into `/etc/kolla/config/` (glance, cinder, nova).
-
-### 6.3 OpenStack (Kolla-Ansible)
-
-Main settings in `deploy/kolla/dev/globals.yml`:
+Requirements, adding and removing nodes, stopping and starting, troubleshooting:
+`deploy/README.md`. Main Kolla settings (`deploy/kolla/dev/globals.yml`):
 
 ```yaml
 kolla_base_distro: "ubuntu"
-kolla_internal_vip_address: "<NODE1_MGMT_IP>"   # dev: node1's IP
-enable_haproxy: "no"                             # production: "yes" + dedicated VIP
-
-network_interface: "<management_iface>"
-neutron_external_interface: "<external_iface>"
-neutron_plugin_agent: "ovn"                      # OVN from day one
-
-nova_compute_virt_type: "qemu"                   # dev (nested); production: "kvm"
-
+kolla_internal_vip_address: "{{ vip_address }}"   # dedicated VIP, from the node file
+enable_haproxy: "yes"                             # from day one, so controllers can join
+neutron_plugin_agent: "ovn"
+nova_compute_virt_type: "qemu"                    # dev (nested); production: "kvm"
 glance_backend_ceph: "yes"
 cinder_backend_ceph: "yes"
 nova_backend_ceph: "yes"
-enable_cinder: "yes"
-enable_ceph_rgw: "yes"                           # RGW registered in Keystone
-enable_horizon: "no"                             # we have our own portal
-
-enable_octavia: "no"                             # "yes" with the load balancer step:
-# octavia_provider_drivers: "ovn:OVN provider"
-# octavia_provider_agents: "ovn"
+enable_horizon: "no"
+enable_octavia: "no"                              # "yes" with the load balancer step
+openstack_service_workers: "1"                    # dev only: fits node1 in 10 GB
+openstack_service_rpc_workers: "1"                # dev only
+kolla_test_images: "yes"                          # dev only: Kolla's prebuilt quay.io images
 ```
 
-Deploy:
+Versions: Ceph is pinned to 20.2.0 to match the Ceph client libraries inside Kolla's 2026.2
+images. 20.2.4 monitors require the `aes256k` cephx cipher, which those clients cannot read, so
+upgrade Ceph together with Kolla's images. 20.2.0 lacks 20.2.4's cephx security fix.
 
-```bash
-kolla-ansible install-deps
-kolla-genpwd
-kolla-ansible bootstrap-servers -i deploy/kolla/dev/multinode
-kolla-ansible prechecks         -i deploy/kolla/dev/multinode
-kolla-ansible deploy            -i deploy/kolla/dev/multinode
-kolla-ansible post-deploy
-```
+### 6.2 Initial OpenStack setup
 
-**Recommended:** snapshot the 3 VMs before `deploy`.
-
-### 6.4 Initial OpenStack setup
-
-- Service user for the backend (`member` role on customer projects)
-- Local emergency admin account
-- Flavors (e.g. `s.small`, `s.medium`, `s.large`)
-- Images: CirrOS (tests), later Ubuntu and Debian
-- External network + subnet for floating IPs
-- Default per-project quotas
+Created by `make infra-apply`: external network `public` with floating IPs, flavors `s.tiny`
+and `s.small`, CirrOS, project `dev` with a network and router, and the backend service user
+`aleph0-api` (`member` on `dev`). Kolla's `admin` is the local emergency admin (not federated).
+Later: Ubuntu and Debian images, default per-project quotas.
 
 ---
 
@@ -298,11 +260,13 @@ PostgreSQL, separate from OpenStack's MariaDB. Tables arrive with the issues tha
 
 ---
 
-## 9. Production (3 physical nodes) — notes
+## 9. Production notes
 
-- HA control plane on all 3 nodes; the cluster tolerates losing **one** node
-- Ceph with `size=3` replication
-- Max load ~2/3 of capacity, so a failed node's VMs fit on the other two
+Starts with 3 physical nodes, each with all four roles; more nodes are added to the node file.
+
+- HA control plane on 3 controllers (odd count); the cluster tolerates losing **one** of them
+- Ceph with `ceph_pool_size: 3` (one copy per host)
+- Max load ~(N−1)/N of capacity, so a failed node's VMs fit on the others
 - Server groups with **anti-affinity** for customers who want redundancy
 - VM HA: evacuation driven by the backend, or **Masakari** (later)
 
@@ -318,6 +282,15 @@ Raised during planning, to be settled in the step that needs them.
   (or a connector) to reach the VPN.
 - **Production domain layout:** portal and API under one domain (no CORS) via the GCP load balancer,
   or separate origins.
+- **Kolla images and Ceph versions:** production builds its own Kolla images (dev uses Kolla's
+  prebuilt test images). Keep the Ceph version matched to the client libraries in those images:
+  today Ceph is pinned to 20.2.0, because 20.2.4 monitors require a cephx cipher the clients
+  cannot read, and 20.2.0 lacks 20.2.4's cephx security fix.
+- **Neutron's stale start-time file:** a node rebooted outside `make infra-start` can leave
+  `neutron_server` unable to register again (`/tmp/neutron_start_time*` survives a container
+  restart). Find a durable fix: a tmpfs `/tmp` override for the container, or an upstream patch.
+- **Image registry:** pulls from quay.io reset connections often. A local registry mirror would
+  remove that dependency.
 
 ---
 
