@@ -1,5 +1,6 @@
-# Checks the node file before anything changes. With cluster_dir/clouds.yaml present (a
-# cluster exists), also refuses nodes that were deleted from the file without node-remove.
+# Checks the node file before anything changes. With cluster_dir set, also refuses a controller
+# put above Ceph's bootstrap host, and with cluster_dir/clouds.yaml present (a cluster exists),
+# nodes that were deleted from the file without node-remove.
 - name: The node file lists nodes
   hosts: localhost
   gather_facts: false
@@ -50,10 +51,31 @@
             that: groups['role_storage'] | default([]) | length >= ceph_pool_size | int
             fail_msg: "{{ groups['role_storage'] | default([]) | length }} storage hosts for ceph_pool_size {{ ceph_pool_size }}"
 
-    - name: Orphan check
+    - name: Checks against the existing cluster
       run_once: true
       when: cluster_dir is defined
       block:
+        # Ceph is run from the first controller in the file, and ceph.yml bootstraps it there when
+        # that controller has no Ceph yet: a new controller put above the bootstrap host would get
+        # a second Ceph cluster. Only the bootstrap host has /etc/ceph/ceph.pub.
+        - name: Look for the Ceph bootstrap host among the controllers
+          ansible.builtin.stat:
+            path: /etc/ceph/ceph.pub
+          delegate_to: "{{ item }}"
+          become: true
+          loop: "{{ groups['role_control'] }}"
+          register: ceph_pub
+          ignore_unreachable: true   # a new controller may not exist yet
+
+        - name: The Ceph bootstrap host is the first controller
+          ansible.builtin.assert:
+            that: bootstrap_hosts | length == 0 or groups['role_control'][0] in bootstrap_hosts
+            fail_msg: >-
+              Ceph runs from {{ bootstrap_hosts | first }}: keep it first among the controllers
+              in the node file (it is {{ groups['role_control'][0] }} now)
+          vars:
+            bootstrap_hosts: "{{ ceph_pub.results | selectattr('stat', 'defined') | selectattr('stat.exists') | map(attribute='item') | list }}"
+
         - name: Look for the admin clouds.yaml
           ansible.builtin.stat:
             path: "{{ cluster_dir }}/clouds.yaml"

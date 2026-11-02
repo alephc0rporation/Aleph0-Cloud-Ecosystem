@@ -1,5 +1,7 @@
 # The dev cluster. Edit this file to add nodes or roles, then run `make infra-apply`.
 # Roles: control (odd count), network, compute, storage. A `vm:` block makes it a libvirt VM.
+# Ceph runs from the first controller listed (node1): add new controllers below it.
+# Roles can be added to a deployed node, not dropped.
 all:
   vars:
     ansible_user: ubuntu
