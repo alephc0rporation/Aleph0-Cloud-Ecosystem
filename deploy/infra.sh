@@ -137,11 +137,10 @@ apply() {
     if [[ ! -f $cluster_dir/clouds.yaml ]]; then
       ka post-deploy
     fi
-  fi
-  play openstack-init.yml
-  if [[ -n $PENDING ]]; then
+    # Before the init, which runs on every apply: a failed init must not redeploy the nodes.
     play markers.yml --limit "$PENDING"
   fi
+  play openstack-init.yml
 }
 
 remove() {

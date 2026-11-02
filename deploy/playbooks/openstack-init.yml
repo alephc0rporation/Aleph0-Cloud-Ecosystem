@@ -34,11 +34,17 @@
         - { name: s.tiny, vcpus: 1, ram: 256, disk: 1 }
         - { name: s.small, vcpus: 1, ram: 1024, disk: 10 }
 
+    # With a checksum, get_url skips the download when the file matches (from the release's SHA256SUMS).
     - name: Download CirrOS
       ansible.builtin.get_url:
         url: "https://download.cirros-cloud.net/{{ cirros_version }}/cirros-{{ cirros_version }}-x86_64-disk.img"
         dest: "{{ cirros_file }}"
+        checksum: sha256:7d6355852aeb6dbcd191bcda7cd74f1536cfe5cbf8a10495a7283a8396e4b75b
         mode: "0644"
+      register: cirros
+      retries: 5
+      delay: 10
+      until: cirros is succeeded
 
     - name: CirrOS image
       openstack.cloud.image:
