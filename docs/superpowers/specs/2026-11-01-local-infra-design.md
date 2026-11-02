@@ -186,11 +186,12 @@ with "dev VMs are stopped: run make infra-start first" (so do `node-remove` and
 1. **Validate** (above).
 2. **Machines**: Terraform in the env's workspace. Before a cluster exists (no `clouds.yaml`),
    `terraform apply`. Once it exists, `terraform plan` to `deploy/kolla/<env>/apply.tfplan`;
-   if any resource change contains `delete` (a replace included: a new `ansible_host`, which
-   changes the MACs, `ceph_disk_gb`, the SSH key, the Noble image URL), it stops before
-   applying anything, lists the resources and says to undo the change or remove the node and
-   add it back. Otherwise it applies the saved plan: new nodes and in-place updates. The check
-   is the same helper `node-remove` uses, with another rule.
+   if any resource change contains `delete` (a replace included: a new `ansible_host` or
+   `storage_ip` replaces the cloud-init disk, and so do the SSH key and the Noble image URL),
+   it stops before applying anything, lists the resources and says to undo the change or
+   remove the node and add it back. Otherwise it applies the saved plan: new nodes and in-place
+   updates (provider 0.9.9 updates `vcpus`, `memory_gb` and `ceph_disk_gb`, a volume resize,
+   in place). The check is the same helper `node-remove` uses, with another rule.
 3. **Hosts** (`playbooks/hosts.yml`): wait for SSH and, on VMs, for cloud-init (exit code 2,
    degraded but usable, is accepted); drop the `127.0.1.1 <hostname>` line; write every node
    into `/etc/hosts` on **all** nodes (`customize_etc_hosts: no` in `globals.yml`: rerunning

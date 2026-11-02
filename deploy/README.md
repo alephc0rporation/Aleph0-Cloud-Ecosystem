@@ -75,9 +75,10 @@ bootstrapped on (`node1` in dev) stays first among the controllers in the file: 
 from the first controller, and a new one listed above it would get a second Ceph cluster.
 
 Once a cluster exists, `infra-apply` refuses, before applying anything, a change that makes
-Terraform delete or replace a VM or one of its disks (a new `ansible_host`, which changes the
-MACs, a new `ceph_disk_gb`, a new SSH key); it lists the resources. Undo the change, or remove the node and
-add it back. New nodes and in-place changes are applied.
+Terraform delete or replace a VM or one of its disks (a new `ansible_host` or `storage_ip`,
+which rewrites the cloud-init disk, a new SSH key); it lists the resources. Undo the change, or
+remove the node and add it back. New nodes and in-place changes are applied: `vcpus`,
+`memory_gb`, and `ceph_disk_gb`, which resizes the Ceph disk (only ever grow it).
 
 Kolla variables never go in the node file: `deploy/kolla/<env>/globals.yml` maps the file's
 own names (`vip_address`, `if_mgmt`, `if_storage`, `if_external`) onto Kolla's, so a node can
