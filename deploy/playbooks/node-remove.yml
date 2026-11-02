@@ -1,5 +1,6 @@
 # Takes a compute and/or storage node out of the cluster. infra.sh runs tag `check`, then
-# `kolla-ansible stop` on the node, then tag `cleanup`. Extra var: node=<name>.
+# `kolla-ansible destroy` on the node (when it answers), then tag `cleanup`. Both tags can be
+# rerun after an interruption. Extra var: node=<name>.
 - name: Check that the node can go, and stop scheduling on it
   hosts: localhost
   gather_facts: false
@@ -29,17 +30,28 @@
         fail_msg: "only {{ storage_left | length }} storage hosts would remain for ceph_pool_size {{ ceph_pool_size }}; lower ceph_pool_size first"
       when: "'storage' in removing"
 
-    - name: Read Ceph health
-      ansible.builtin.command: cephadm shell -- ceph health
+    - name: List the hosts Ceph knows
+      ansible.builtin.command: cephadm shell -- ceph orch host ls -f json
       delegate_to: "{{ groups['role_control'][0] }}"
       become: true
-      register: health
+      register: ceph_hosts
       changed_when: false
 
-    - name: Ceph is healthy
-      ansible.builtin.assert:
-        that: health.stdout is search('^HEALTH_OK')
-        fail_msg: "Ceph is not HEALTH_OK: {{ health.stdout }}"
+    # Once the node is out of Ceph, a rerun must not depend on the cluster's health.
+    - name: Ceph is healthy while the node is a Ceph host
+      when: node in (ceph_hosts.stdout | from_json | map(attribute='hostname'))
+      block:
+        - name: Read Ceph health
+          ansible.builtin.command: cephadm shell -- ceph health
+          delegate_to: "{{ groups['role_control'][0] }}"
+          become: true
+          register: health
+          changed_when: false
+
+        - name: Ceph is healthy
+          ansible.builtin.assert:
+            that: health.stdout is search('^HEALTH_OK')
+            fail_msg: "Ceph is not HEALTH_OK: {{ health.stdout }}"
 
     - name: Compute
       when: "'compute' in removing"

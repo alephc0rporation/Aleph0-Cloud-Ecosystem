@@ -77,17 +77,34 @@ apply() {
 remove() {
   local node=${1:?usage: infra.sh remove <env> <node>}
   play node-remove.yml --tags check -e "node=$node"
-  ka stop --yes-i-really-really-mean-it --ignore-missing --limit "$node"
+  # destroy (not stop): a physical node that reboots must not bring its OpenStack containers back.
+  # A rerun after an interruption may find the node already off or gone.
+  if ansible "$node" "${inv[@]}" -m ansible.builtin.ping >/dev/null 2>&1; then
+    ka destroy --yes-i-really-really-mean-it --limit "$node"
+  else
+    echo "$node does not answer: skipping the Kolla cleanup on it."
+  fi
   play node-remove.yml --tags cleanup -e "node=$node"
   if has_vms; then
     # Apply the node file without the node. A targeted destroy would take every VM with it:
     # all domains depend on the same volume resources, so Terraform plans them all for destruction.
-    local rest
+    # So plan first, and refuse unless the plan only deletes resources of this node.
+    local rest plan=$cluster_dir/remove-$node.tfplan
     rest=$(mktemp --suffix=.yml)
+    trap "rm -f '$rest' '$plan'" EXIT
     python3 -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); del d["all"]["hosts"][sys.argv[2]]; yaml.safe_dump(d, open(sys.argv[3], "w"))' "$nodes" "$node" "$rest"
     tf workspace select "$env"
-    tf apply -input=false -auto-approve -var "nodes_file=$rest"
-    rm -f "$rest"
+    tf plan -input=false -var "nodes_file=$rest" -out="$plan"
+    tf show -json "$plan" | python3 -c '
+import json, sys
+node, key = sys.argv[1], "[\"" + sys.argv[1] + "\"]"
+other = [c["address"] for c in json.load(sys.stdin)["resource_changes"]
+         if c["change"]["actions"] not in (["no-op"], ["read"])
+         and not (c["change"]["actions"] == ["delete"] and key in c["address"])]
+if other:
+    sys.exit("\n".join(other) + "\nTerraform would change more than " + node + "; run make infra-apply first and retry")
+' "$node"
+    tf apply -input=false "$plan"
   fi
   echo "Remove $node from deploy/nodes/$env.yml."
 }
