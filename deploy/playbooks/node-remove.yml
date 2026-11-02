@@ -130,6 +130,11 @@
               ansible.builtin.command: cephadm shell -- ceph orch host rm {{ node }}
               changed_when: true
 
+        # `host rm` leaves the host's empty bucket in the CRUSH map. A missing bucket is not an error.
+        - name: Remove the node from the CRUSH map
+          ansible.builtin.command: cephadm shell -- ceph osd crush remove {{ node }}
+          changed_when: true
+
     - name: Delete the node's marker
       ansible.builtin.file:
         path: /etc/aleph0/roles
