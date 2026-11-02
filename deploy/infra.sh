@@ -49,6 +49,23 @@ api_up() {
   return 1
 }
 ka() { kolla-ansible "$1" "${inv[@]}" --configdir "$cluster_dir" --passwords "$cluster_dir/passwords.yml" "${@:2}"; }
+# Reads `terraform show -json <plan>` on stdin; fails, listing the refused resources and then $2,
+# if the plan does more than allowed. With a node ($1): anything but deleting that node's
+# resources (node-remove). Without one: any delete, which a replace includes (infra-apply).
+tf_check() {
+  python3 -c '
+import json, sys
+node, key = sys.argv[1], "[\"" + sys.argv[1] + "\"]"
+def refused(actions, address):
+    if not node:
+        return "delete" in actions
+    return actions not in (["no-op"], ["read"]) and not (actions == ["delete"] and key in address)
+bad = [c["address"] for c in json.load(sys.stdin).get("resource_changes", [])
+       if refused(c["change"]["actions"], c["address"])]
+if bad:
+    sys.exit("\n".join(bad) + "\n" + sys.argv[2])
+' "$1" "$2"
+}
 
 passwords() {
   if [[ ! -f $cluster_dir/passwords.yml ]]; then
@@ -61,7 +78,16 @@ machines() {
   has_vms || return 0
   tf init -input=false >/dev/null
   tf workspace select -or-create "$env"
-  tf apply -input=false -auto-approve -var "nodes_file=$PWD/$nodes"
+  if [[ ! -f $cluster_dir/clouds.yaml ]]; then
+    tf apply -input=false -auto-approve -var "nodes_file=$PWD/$nodes"
+    return
+  fi
+  # A cluster exists: new machines and in-place updates only, never a delete or replace.
+  local plan=$cluster_dir/apply.tfplan
+  trap "rm -f '$plan'" EXIT
+  tf plan -input=false -var "nodes_file=$PWD/$nodes" -out="$plan"
+  tf show -json "$plan" | tf_check "" "Terraform would delete or replace the resources above, which infra-apply never does on a running cluster. Undo that change in deploy/$nodes; to rebuild a node, make node-remove it, then add it back."
+  tf apply -input=false "$plan"
 }
 
 apply() {
@@ -118,15 +144,7 @@ remove() {
     python3 -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); d["all"]["hosts"].pop(sys.argv[2], None); yaml.safe_dump(d, open(sys.argv[3], "w"))' "$nodes" "$node" "$rest"
     tf workspace select "$env"
     tf plan -input=false -var "nodes_file=$rest" -out="$plan"
-    tf show -json "$plan" | python3 -c '
-import json, sys
-node, key = sys.argv[1], "[\"" + sys.argv[1] + "\"]"
-other = [c["address"] for c in json.load(sys.stdin).get("resource_changes", [])
-         if c["change"]["actions"] not in (["no-op"], ["read"])
-         and not (c["change"]["actions"] == ["delete"] and key in c["address"])]
-if other:
-    sys.exit("\n".join(other) + "\nTerraform would change more than " + node + "; run make infra-apply first and retry")
-' "$node"
+    tf show -json "$plan" | tf_check "$node" "Terraform would change more than $node; run make infra-apply first and retry"
   fi
   play node-remove.yml --tags check -e "node=$node"
   # destroy (not stop): a physical node that reboots must not bring its OpenStack containers back.
@@ -246,6 +264,22 @@ run_tests() {
       exit 1
     fi
     echo "ok: nodes/testdata/$f.yml rejected ($msg)"
+  done
+  # tf_check on canned plans, per mode (apply, or removing node3) one allowed and one refused.
+  # Each case: <expected result>|<node>|<resource changes>.
+  local want node changes got
+  local create='{"address": "libvirt_domain.node[\"node4\"]", "change": {"actions": ["create"]}}'
+  local replace='{"address": "libvirt_volume.ceph[\"node1\"]", "change": {"actions": ["delete", "create"]}}'
+  local gone='{"address": "libvirt_volume.ceph[\"node3\"]", "change": {"actions": ["delete"]}}'
+  for t in "allowed||$create" "refused libvirt_volume.ceph[\"node1\"]||$create, $replace" \
+           "allowed|node3|$gone" "refused libvirt_domain.node[\"node4\"]|node3|$gone, $create"; do
+    IFS='|' read -r want node changes <<<"$t"
+    if out=$(tf_check "$node" "the refusal" <<<"{\"resource_changes\": [$changes]}" 2>&1); then got=allowed; else got="refused $out"; fi
+    if [[ $got != "$want"* ]]; then
+      echo "FAIL: tf_check ${node:-apply} on [$changes] gave: $got" >&2
+      exit 1
+    fi
+    echo "ok: tf_check ${node:-apply}: $want"
   done
   tf init -backend=false -input=false >/dev/null
   tf validate
