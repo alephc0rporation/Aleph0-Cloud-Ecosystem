@@ -80,13 +80,14 @@ remove() {
   ka stop --yes-i-really-really-mean-it --ignore-missing --limit "$node"
   play node-remove.yml --tags cleanup -e "node=$node"
   if has_vms; then
+    # Apply the node file without the node. A targeted destroy would take every VM with it:
+    # all domains depend on the same volume resources, so Terraform plans them all for destruction.
+    local rest
+    rest=$(mktemp --suffix=.yml)
+    python3 -c 'import sys, yaml; d = yaml.safe_load(open(sys.argv[1])); del d["all"]["hosts"][sys.argv[2]]; yaml.safe_dump(d, open(sys.argv[3], "w"))' "$nodes" "$node" "$rest"
     tf workspace select "$env"
-    tf destroy -input=false -auto-approve -var "nodes_file=$PWD/$nodes" \
-      -target="libvirt_domain.node[\"$node\"]" \
-      -target="libvirt_volume.system[\"$node\"]" \
-      -target="libvirt_volume.ceph[\"$node\"]" \
-      -target="libvirt_volume.init[\"$node\"]" \
-      -target="libvirt_cloudinit_disk.init[\"$node\"]"
+    tf apply -input=false -auto-approve -var "nodes_file=$rest"
+    rm -f "$rest"
   fi
   echo "Remove $node from deploy/nodes/$env.yml."
 }
