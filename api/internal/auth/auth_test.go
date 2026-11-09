@@ -13,7 +13,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/auth"
+	"github.com/alephc0rporation/Cardinal/api/internal/auth"
 )
 
 const issuer = "http://localhost:8081/realms/aleph0"

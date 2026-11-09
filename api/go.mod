@@ -1,4 +1,4 @@
-module github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api
+module github.com/alephc0rporation/Cardinal/api
 
 go 1.27.3
 

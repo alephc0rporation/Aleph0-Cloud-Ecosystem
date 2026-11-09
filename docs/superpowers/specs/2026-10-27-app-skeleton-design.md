@@ -44,7 +44,7 @@ Generated code (Go and TypeScript) is committed, so `go build` and `npm run dev`
 ├── .env.example
 ├── README.md
 ├── api/
-│   ├── go.mod                    # module github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api
+│   ├── go.mod                    # module github.com/alephc0rporation/Cardinal/api
 │   ├── openapi.yaml
 │   ├── oapi-codegen.yaml
 │   ├── cmd/api/main.go           # `api serve`

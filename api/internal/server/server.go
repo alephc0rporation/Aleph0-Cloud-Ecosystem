@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/oapi"
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/problem"
+	"github.com/alephc0rporation/Cardinal/api/internal/oapi"
+	"github.com/alephc0rporation/Cardinal/api/internal/problem"
 )
 
 // Handler builds the root handler. Everything under /v1/ goes through requireAuth,

@@ -10,7 +10,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/problem"
+	"github.com/alephc0rporation/Cardinal/api/internal/problem"
 )
 
 // Claims is the part of the access token the API uses.

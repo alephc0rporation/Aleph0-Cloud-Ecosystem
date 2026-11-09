@@ -1,4 +1,4 @@
-# Aleph0 Cloud Ecosystem
+# Aleph0 Cardinal
 
 Our own cloud platform on OpenStack: a web portal and a public API in front of VMs, storage,
 networks and load balancers. See [docs/architecture.md](docs/architecture.md).
@@ -65,3 +65,11 @@ TanStack Query hook in `web/src/api/gen/`. Never edit generated files by hand.
 - **401 on every API call after login.** Check that the token's `iss` is
   `http://localhost:8081/realms/aleph0` and its `aud` contains `api`; the API logs the reason
   as `access token rejected`.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.

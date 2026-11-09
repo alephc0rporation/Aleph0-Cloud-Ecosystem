@@ -27,7 +27,7 @@ function Home() {
     <div className="flex min-h-svh items-center justify-center p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Aleph0 Cloud</CardTitle>
+          <CardTitle>Aleph0 Cardinal</CardTitle>
           <CardDescription>Signed in</CardDescription>
         </CardHeader>
         <CardContent>
