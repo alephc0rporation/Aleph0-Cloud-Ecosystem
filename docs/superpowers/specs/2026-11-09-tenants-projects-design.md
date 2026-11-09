@@ -15,7 +15,7 @@ Customers organize their resources like in a public cloud. A **tenant** is a cus
 | Tenant creation | Self-service: any signed-in user creates one and becomes its owner | Like signing up to a public cloud; a user can belong to several tenants |
 | Roles | `owner` and `member`, at tenant level only | Per-project roles can be added later without changing these |
 | Tenant in OpenStack | None: a tenant exists only in our DB | OpenStack never needs it; creating a tenant stays a fast DB write |
-| Project in OpenStack | One OpenStack project per project, in the Keystone domain `customers` | Separate quotas, networks and access per project |
+| Project in OpenStack | One OpenStack project per project, in the Keystone domain `customers`, tagged `tenant=<tenant id>` | Separate quotas, networks and access per project; the tag lets admins list one tenant's projects (`openstack project list --tags tenant=<id>`). A domain per tenant was rejected: creating domains needs cloud admin, it adds no isolation between customers, and Keystone cannot move a project between domains later |
 | Creating OpenStack projects | User `aleph0-provisioner`, with the `manager` role on domain `customers` only | Keystone's domain manager can create projects in its domain and nothing else in the cloud; answers the "creating projects" open question in `architecture.md` |
 | Other OpenStack calls | User `aleph0-api` (role `member`), with a token scoped to one project | As `architecture.md` already says |
 | Identity | No Keycloak–Keystone federation | Customers never reach OpenStack; access rules live in one place, our DB |
@@ -53,7 +53,7 @@ PostgreSQL. This step brings goose (migrations embedded in the binary, run by `a
 
 Names are 1–64 characters after trimming; the OpenAPI spec enforces it.
 
-In OpenStack, a project's Keystone project is named after our project ID, with `tenant <tenant id>: <project name>` as its description, for admins.
+In OpenStack, a project's Keystone project is named after our project ID, tagged `tenant=<tenant id>`, with `<project name>` as its description, for admins.
 
 ## Backend
 
@@ -79,6 +79,19 @@ In OpenStack, a project's Keystone project is named after our project ID, with `
 
 One function per check, used by every handler: `memberOf(tenant, sub)` returns the role or "not a member". No middleware magic: each handler states which role it needs.
 
+Two layers keep customers apart:
+
+1. **Our API**: the membership check above, on every tenant and project route. Customers have no OpenStack identity, so this is the only way in.
+2. **OpenStack scoping**: every call uses a token scoped to one project, so a mistake in layer 1 that passes another project's VM ID still gets "not found" from Nova. Networks are separate per project.
+
+Rules that keep both layers working:
+
+- The OpenStack project (and so the scoped token) always comes from our DB row of the project the caller is a member of, never from request data.
+- The `tenant=` tag is a label for admins. Access decisions never read it.
+- A test calls every tenant and project route as a non-member and expects `404`, so a route added without the check fails (see Testing).
+
+Weak spot, accepted: `aleph0-api` is `member` on every customer project, and `aleph0-provisioner` could give itself the same, so either password opens all customer resources (not the `Default` domain, where the admin project and OpenStack's own service users live). This comes from not federating identities. Mitigations: OpenStack APIs reachable only from the backend (over the VPN in production), passwords in `.env` in dev and Secret Manager in production, and rotation by setting a new password and restarting the API.
+
 ### Flows
 
 **Create a tenant**: one transaction takes a lock per user (`pg_advisory_xact_lock(hashtext(sub))`, released at commit), checks the caller has created fewer than `LIMIT_TENANTS_PER_USER` tenants, and inserts the tenant and the caller's `owner` membership. Without the lock, parallel requests from one user would all pass the count and bypass the limit.
@@ -86,7 +99,7 @@ One function per check, used by every handler: `memberOf(tenant, sub)` returns t
 **Create a project**:
 
 1. Transaction: lock the tenant row (`SELECT … FOR UPDATE`), check the project count against `LIMIT_PROJECTS_PER_TENANT`, insert the project as `provisioning`. A duplicate name fails on the unique constraint → `409`.
-2. As `aleph0-provisioner`: find or create the Keystone project in `customers`, named after the project ID; give `aleph0-api` the `member` role on it; save `openstack_project_id`.
+2. As `aleph0-provisioner`: find or create the Keystone project in `customers`, named after the project ID and tagged `tenant=<tenant id>`; give `aleph0-api` the `member` role on it; save `openstack_project_id`.
 3. For each region, as `aleph0-api` scoped to the new project: find or create network `default`, subnet `default` (`192.168.0.0/24`, like `dev-subnet`), router `default` with its gateway on the region's external network and an interface on the subnet.
 4. Set `ready`; return `201`.
 
@@ -174,6 +187,7 @@ OpenStack's error details go to the API log with the request ID. The response ca
 
 **Go, in `make test`** (no external services):
 
+- Every tenant and project route, listed in one table, called as a non-member → `404`; a new route must be added to the table (the test fails when the spec has a `/v1/tenants/…` or `/v1/projects/…` route the table lacks)
 - Handlers against a fake `Cloud` and a fake store:
   - membership: member, owner, non-member (`404`)
   - limits (`403`), duplicate name (`409`)
