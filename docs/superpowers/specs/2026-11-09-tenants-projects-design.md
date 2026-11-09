@@ -183,8 +183,8 @@ OpenStack's error details go to the API log with the request ID. The response ca
 
 **Go, opt-in** (`make test-integration`, build tag `integration`; skipped when its variables are missing):
 
-- Store queries against the compose Postgres, in a database created and dropped by the test
-- The OpenStack adapter against the dev cluster: create a project and its default network twice (the second run creates nothing), delete twice; with the cluster stopped, calls fail as `unavailable` within the timeout
+- Store queries against the compose Postgres, in a database created and dropped by the test; 10 parallel tenant creations by one user stop at the limit
+- The OpenStack adapter against the dev cluster: create a project and its default network twice (the second run creates nothing), delete twice; `DeleteProject` removes a Keystone project whose ID was never saved; with the cluster stopped, calls fail as `unavailable` within the timeout
 - Re-authentication: a local fake Keystone rejects the first token; the client logs in again
 
 **Web** (Vitest): the new-tenant screen, the project list states (`provisioning`, `failed`, a `409` message), the tenant switcher.
