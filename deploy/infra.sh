@@ -70,6 +70,9 @@ node, key = sys.argv[1], "[\"" + sys.argv[1] + "\"]"
 def refused(actions, address):
     if not node:
         return "delete" in actions
+    # After a reboot empties /tmp the provider writes the cloud-init ISOs again: local files only.
+    if actions == ["create"] and address.startswith("libvirt_cloudinit_disk."):
+        return False
     return actions not in (["no-op"], ["read"]) and not (actions == ["delete"] and key in address)
 bad = [c["address"] for c in json.load(sys.stdin).get("resource_changes", [])
        if refused(c["change"]["actions"], c["address"])]
@@ -300,8 +303,9 @@ run_tests() {
   local create='{"address": "libvirt_domain.node[\"node4\"]", "change": {"actions": ["create"]}}'
   local replace='{"address": "libvirt_volume.ceph[\"node1\"]", "change": {"actions": ["delete", "create"]}}'
   local gone='{"address": "libvirt_volume.ceph[\"node3\"]", "change": {"actions": ["delete"]}}'
+  local iso='{"address": "libvirt_cloudinit_disk.init[\"node1\"]", "change": {"actions": ["create"]}}'
   for t in "allowed||$create" "refused libvirt_volume.ceph[\"node1\"]||$create, $replace" \
-           "allowed|node3|$gone" "refused libvirt_domain.node[\"node4\"]|node3|$gone, $create"; do
+           "allowed|node3|$gone, $iso" "refused libvirt_domain.node[\"node4\"]|node3|$gone, $create"; do
     IFS='|' read -r want node changes <<<"$t"
     if out=$(tf_check "$node" "the refusal" <<<"{\"resource_changes\": [$changes]}" 2>&1); then got=allowed; else got="refused $out"; fi
     if [[ $got != "$want"* ]]; then

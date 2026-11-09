@@ -124,6 +124,21 @@ resource "libvirt_volume" "init" {
   pool     = libvirt_pool.aleph0.name
   target   = { format = { type = "iso" } }
   create   = { content = { url = libvirt_cloudinit_disk.init[each.key].path } }
+  # The provider keeps the generated ISO in /tmp, which a reboot empties, and regenerates it under
+  # a new path: replace the volume when the cloud-init content changes, not when the path does.
+  lifecycle {
+    ignore_changes       = [create]
+    replace_triggered_by = [terraform_data.init_content[each.key]]
+  }
+}
+
+resource "terraform_data" "init_content" {
+  for_each = local.vms
+  input = {
+    meta_data      = libvirt_cloudinit_disk.init[each.key].meta_data
+    user_data      = libvirt_cloudinit_disk.init[each.key].user_data
+    network_config = libvirt_cloudinit_disk.init[each.key].network_config
+  }
 }
 
 resource "libvirt_domain" "node" {
