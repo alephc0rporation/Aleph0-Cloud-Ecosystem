@@ -10,7 +10,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3filter"
 	nethttpmiddleware "github.com/oapi-codegen/nethttp-middleware"
 
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/problem"
+	"github.com/alephc0rporation/Cardinal/api/internal/problem"
 )
 
 // validateRequests checks parameters and bodies against spec, so constraints like

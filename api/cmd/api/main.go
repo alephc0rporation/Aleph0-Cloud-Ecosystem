@@ -1,4 +1,4 @@
-// Command api is the Aleph0 Cloud backend.
+// Command api is the Aleph0 Cardinal backend.
 package main
 
 import (
@@ -11,10 +11,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/auth"
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/config"
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/handlers"
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/server"
+	"github.com/alephc0rporation/Cardinal/api/internal/auth"
+	"github.com/alephc0rporation/Cardinal/api/internal/config"
+	"github.com/alephc0rporation/Cardinal/api/internal/handlers"
+	"github.com/alephc0rporation/Cardinal/api/internal/server"
 )
 
 const usage = "usage: api serve"

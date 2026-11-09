@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/problem"
+	"github.com/alephc0rporation/Cardinal/api/internal/problem"
 )
 
 func TestWrite(t *testing.T) {
