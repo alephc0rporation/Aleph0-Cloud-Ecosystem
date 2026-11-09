@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/auth"
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/handlers"
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/server"
+	"github.com/alephc0rporation/Cardinal/api/internal/auth"
+	"github.com/alephc0rporation/Cardinal/api/internal/handlers"
+	"github.com/alephc0rporation/Cardinal/api/internal/server"
 )
 
 var claims = auth.Claims{Subject: "user-1", Email: "dev@aleph0.local", Name: "Dev User"}

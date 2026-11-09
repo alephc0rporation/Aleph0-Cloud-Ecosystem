@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/config"
+	"github.com/alephc0rporation/Cardinal/api/internal/config"
 )
 
 func env(m map[string]string) func(string) string {

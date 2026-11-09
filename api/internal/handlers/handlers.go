@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/auth"
-	"github.com/alephc0rporation/Aleph0-Cloud-Ecosystem/api/internal/oapi"
+	"github.com/alephc0rporation/Cardinal/api/internal/auth"
+	"github.com/alephc0rporation/Cardinal/api/internal/oapi"
 )
 
 type Handlers struct {
