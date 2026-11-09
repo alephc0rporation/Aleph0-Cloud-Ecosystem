@@ -1,0 +1,131 @@
+# Checks the node file before anything changes. With cluster_dir set, also refuses a controller
+# put above Ceph's bootstrap host, and with cluster_dir/clouds.yaml present (a cluster exists),
+# nodes that were deleted from the file without node-remove.
+- name: The node file lists nodes
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: At least one node
+      ansible.builtin.assert:
+        that: groups['all'] | difference(['localhost']) | length > 0
+        fail_msg: "the node file lists no nodes"
+
+# Ceph is run from the first controller in the file, and ceph.yml bootstraps it there when that
+# controller has no Ceph yet: a new controller put above the bootstrap host would get a second
+# Ceph cluster. Only the bootstrap host has /etc/ceph/ceph.pub. A play of its own: in a loop, an
+# unreachable item fails the task even with ignore_unreachable.
+- name: Find the Ceph bootstrap host
+  hosts: role_control
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Look for /etc/ceph/ceph.pub
+      ansible.builtin.stat:
+        path: /etc/ceph/ceph.pub
+      register: ceph_pub
+      ignore_unreachable: true   # a new controller may not exist yet
+      when: cluster_dir is defined
+
+- name: Validate the node file
+  hosts: all:!localhost
+  gather_facts: false
+  vars:
+    nodes: "{{ groups['all'] | difference(['localhost']) }}"
+    known_roles: [control, network, compute, storage]
+  tasks:
+    - name: Rules
+      run_once: true
+      block:
+        - name: Every node has an address, a storage address and known roles
+          ansible.builtin.assert:
+            that:
+              - hostvars[item].ansible_host is defined
+              - hostvars[item].storage_ip is defined
+              - hostvars[item].node_roles | default([]) | length > 0
+              - hostvars[item].node_roles | default([]) | difference(known_roles) | length == 0
+            fail_msg: "{{ item }}: needs ansible_host, storage_ip and node_roles from {{ known_roles }}"
+            quiet: true
+          loop: "{{ nodes }}"
+
+        - name: Odd number of controllers
+          ansible.builtin.assert:
+            that: groups['role_control'] | default([]) | length is odd
+            fail_msg: "{{ groups['role_control'] | default([]) | length }} controllers: use 1, 3 or 5"
+
+        - name: At least one network node
+          ansible.builtin.assert:
+            that: groups['role_network'] | default([]) | length > 0
+            fail_msg: "no node has the network role"
+
+        - name: At least one compute node
+          ansible.builtin.assert:
+            that: groups['role_compute'] | default([]) | length > 0
+            fail_msg: "no node has the compute role"
+
+        - name: Enough storage hosts for ceph_pool_size
+          ansible.builtin.assert:
+            that: groups['role_storage'] | default([]) | length >= ceph_pool_size | int
+            fail_msg: "{{ groups['role_storage'] | default([]) | length }} storage hosts for ceph_pool_size {{ ceph_pool_size }}"
+
+    - name: Checks against the existing cluster
+      run_once: true
+      when: cluster_dir is defined
+      block:
+        # fail_msg is templated even when the assert passes, so it must not index an empty list:
+        # before the first apply no controller has Ceph. role_control is never empty here.
+        - name: The Ceph bootstrap host is the first controller
+          ansible.builtin.assert:
+            that: bootstrap_hosts | length == 0 or groups['role_control'][0] in bootstrap_hosts
+            fail_msg: >-
+              Ceph runs from {{ bootstrap_hosts | join(', ') }}: keep it first among the controllers
+              in the node file (it is {{ groups['role_control'][0] }} now)
+          vars:
+            bootstrap_hosts: >-
+              {{ groups['role_control'] | map('extract', hostvars) | selectattr('ceph_pub.stat', 'defined')
+              | selectattr('ceph_pub.stat.exists') | map(attribute='inventory_hostname') | list }}
+
+        - name: Look for the admin clouds.yaml
+          ansible.builtin.stat:
+            path: "{{ cluster_dir }}/clouds.yaml"
+          delegate_to: localhost
+          register: clouds
+
+        # Every compute and network node runs an OVN agent; every controller is a Ceph host.
+        - name: Hosts Neutron knows
+          ansible.builtin.command: openstack network agent list -f value -c Host
+          delegate_to: localhost
+          register: agent_hosts
+          changed_when: false
+          when: clouds.stat.exists
+
+        # ceph.yml installs it; it is missing before Ceph's first run or while Ceph is rebuilt.
+        - name: Look for cephadm on the first controller
+          ansible.builtin.stat:
+            path: /usr/local/bin/cephadm
+          delegate_to: "{{ groups['role_control'][0] }}"
+          register: cephadm
+          when: clouds.stat.exists
+
+        - name: Skip Ceph's hosts without cephadm
+          ansible.builtin.debug:
+            msg: "{{ groups['role_control'][0] }} has no cephadm: the orphan check skips Ceph's hosts"
+          when: clouds.stat.exists and not cephadm.stat.exists
+
+        - name: Hosts Ceph knows
+          ansible.builtin.command: cephadm shell -- ceph orch host ls --format json
+          delegate_to: "{{ groups['role_control'][0] }}"
+          become: true
+          register: ceph_hosts
+          changed_when: false
+          when: clouds.stat.exists and cephadm.stat.exists
+
+        - name: No node left the file without node-remove
+          ansible.builtin.assert:
+            that: orphans | length == 0
+            fail_msg: >-
+              {{ orphans | join(', ') }}: still part of the cluster: run
+              make node-remove ENV={{ cluster_env }} NODE=<name>, or put it back in the file
+          vars:
+            ceph_names: "{{ ceph_hosts.stdout | from_json | map(attribute='hostname') | list if ceph_hosts is not skipped else [] }}"
+            orphans: "{{ (agent_hosts.stdout_lines + ceph_names) | unique | difference(nodes) }}"
+          when: clouds.stat.exists

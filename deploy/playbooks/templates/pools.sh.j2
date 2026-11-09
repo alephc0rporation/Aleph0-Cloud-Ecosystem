@@ -1,0 +1,26 @@
+#!/bin/bash
+# Runs inside `cephadm shell` (rendered by ceph.yml). Safe to rerun.
+set -euo pipefail
+{% if ceph_osd_memory_target is defined %}
+ceph config set osd osd_memory_target {{ ceph_osd_memory_target }}
+{% endif %}
+{% if ceph_mon_max_pg_per_osd is defined %}
+ceph config set global mon_max_pg_per_osd {{ ceph_mon_max_pg_per_osd }}
+{% endif %}
+{% if ceph_pool_size | int == 1 %}
+ceph config set global mon_allow_pool_size_one true
+{% endif %}
+for pool in volumes images vms backups; do
+  ceph osd pool create "$pool"
+  rbd pool init "$pool"
+  ceph osd pool set "$pool" size {{ ceph_pool_size }} --yes-i-really-mean-it
+  ceph osd pool set "$pool" min_size {{ (ceph_pool_size | int) - (ceph_pool_size | int // 2) }}
+done
+ceph auth get-or-create client.glance mon 'profile rbd' osd 'profile rbd pool=images' mgr 'profile rbd pool=images' >/dev/null
+ceph auth get-or-create client.cinder mon 'profile rbd' osd 'profile rbd pool=volumes, profile rbd pool=vms, profile rbd-read-only pool=images' mgr 'profile rbd pool=volumes, profile rbd pool=vms' >/dev/null
+ceph auth get-or-create client.cinder-backup mon 'profile rbd' osd 'profile rbd pool=backups' mgr 'profile rbd pool=backups' >/dev/null
+# Kolla merges ceph.conf as INI; strip the generated file's leading tabs.
+ceph config generate-minimal-conf | sed 's/^[[:space:]]*//' > /specs/out/ceph.conf
+for user in glance cinder cinder-backup; do
+  ceph auth get "client.$user" > "/specs/out/ceph.client.$user.keyring"
+done

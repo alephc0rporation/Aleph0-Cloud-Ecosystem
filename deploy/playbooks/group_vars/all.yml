@@ -1,0 +1,2 @@
+ceph_version: "20.2.0"   # the Ceph client version in Kolla's images; newer monitors use the aes256k cipher they cannot read
+ceph_image: "quay.io/ceph/ceph:v{{ ceph_version }}"

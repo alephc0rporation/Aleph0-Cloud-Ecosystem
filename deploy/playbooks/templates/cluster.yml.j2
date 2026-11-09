@@ -1,0 +1,47 @@
+{# cephadm service specs for the whole cluster, applied with `ceph orch apply -i`. #}
+{% set storage = groups['role_storage'] | default([]) %}
+{% for h in ceph_hosts %}
+---
+service_type: host
+hostname: {{ h }}
+addr: {{ hostvars[h].storage_ip }}
+labels:
+{% if h in groups['role_control'] %}
+  - mon
+  - mgr
+  - rgw
+  - _admin
+{% endif %}
+{% if h in storage %}
+  - osd
+{% endif %}
+{% endfor %}
+---
+service_type: mon
+placement:
+  label: mon
+---
+service_type: mgr
+placement:
+  label: mgr
+---
+service_type: rgw
+service_id: default
+placement:
+  label: rgw
+spec:
+  rgw_frontend_port: 8080
+{% for h in storage %}
+---
+service_type: osd
+service_id: {{ h }}
+placement:
+  hosts:
+    - {{ h }}
+spec:
+  data_devices:
+    paths:
+{% for d in hostvars[h].ceph_devices %}
+      - {{ d }}
+{% endfor %}
+{% endfor %}

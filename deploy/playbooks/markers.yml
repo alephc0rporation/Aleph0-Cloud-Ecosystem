@@ -1,0 +1,17 @@
+# Records the roles a node got, after a successful deploy. Run with --limit <pending nodes>.
+- name: Write the markers
+  hosts: all:!localhost
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Create /etc/aleph0
+      ansible.builtin.file:
+        path: /etc/aleph0
+        state: directory
+        mode: "0755"
+
+    - name: Write /etc/aleph0/roles
+      ansible.builtin.copy:
+        dest: /etc/aleph0/roles
+        mode: "0644"
+        content: "{{ node_roles | sort | to_json }}\n"

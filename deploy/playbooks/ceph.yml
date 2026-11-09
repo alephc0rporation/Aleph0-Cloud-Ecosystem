@@ -1,0 +1,132 @@
+# Ceph via cephadm, administered from the first controller. Safe to rerun: bootstrap runs once,
+# the specs and the pool script are declarative.
+- name: Pull the Ceph image on every Ceph host
+  hosts: role_control:role_storage
+  gather_facts: false
+  become: true
+  tasks:
+    # cephadm gives up on the first connection reset, and quay.io resets pulls now and then.
+    # Once the image is local, cephadm never pulls.
+    - name: Pull the image
+      ansible.builtin.shell: docker image inspect {{ ceph_image }} >/dev/null 2>&1 || docker pull {{ ceph_image }}
+      register: pull
+      retries: 10
+      delay: 10
+      until: pull.rc == 0
+      changed_when: pull.stdout != ""
+
+- name: Install cephadm on the controllers
+  hosts: role_control
+  gather_facts: false
+  become: true
+  tasks:
+    # get_url asks the server on every run, and download.ceph.com resets connections now and then.
+    # A versioned file plus a link, so a new ceph_version replaces the binary (get_url keeps an existing file).
+    - name: Download cephadm
+      ansible.builtin.get_url:
+        url: "https://download.ceph.com/rpm-{{ ceph_version }}/el9/noarch/cephadm"
+        dest: "/usr/local/bin/cephadm-{{ ceph_version }}"
+        mode: "0755"
+      register: cephadm_download
+      retries: 5
+      delay: 10
+      until: cephadm_download is succeeded
+
+    - name: Link cephadm to that version
+      ansible.builtin.file:
+        src: "/usr/local/bin/cephadm-{{ ceph_version }}"
+        dest: /usr/local/bin/cephadm
+        state: link
+
+- name: Bootstrap Ceph on the first controller
+  hosts: role_control[0]
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Bootstrap
+      ansible.builtin.command:
+        cmd: >-
+          cephadm --image {{ ceph_image }} bootstrap
+          --mon-ip {{ storage_ip }}
+          --ssh-user {{ ansible_user }}
+          --skip-monitoring-stack
+          --skip-dashboard
+        creates: /etc/ceph/ceph.conf
+
+    - name: Read the cephadm SSH key
+      ansible.builtin.slurp:
+        src: /etc/ceph/ceph.pub
+      register: ceph_pub
+
+- name: Let cephadm reach every Ceph host
+  hosts: role_control:role_storage
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Authorize the cephadm key
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ hostvars[groups['role_control'][0]].ceph_pub.content | b64decode }}"
+
+- name: Place daemons, create pools and users, hand the keys to Kolla
+  hosts: role_control[0]
+  gather_facts: false
+  become: true
+  vars:
+    ceph_hosts: "{{ groups['role_control'] | union(groups['role_storage'] | default([])) | sort }}"
+    expected_osds: "{{ groups['role_storage'] | default([]) | map('extract', hostvars, 'ceph_devices') | map('length') | sum }}"
+    shell: cephadm shell -m /etc/aleph0/ceph:/specs --
+  tasks:
+    - name: Create the spec folder
+      ansible.builtin.file:
+        path: /etc/aleph0/ceph/out
+        state: directory
+        mode: "0700"
+
+    - name: Write the cluster spec and the pool script
+      ansible.builtin.template:
+        src: "templates/{{ item }}.j2"
+        dest: "/etc/aleph0/ceph/{{ item }}"
+        mode: "0600"
+      loop: [cluster.yml, pools.sh]
+
+    - name: Apply the cluster spec
+      ansible.builtin.command: "{{ shell }} ceph orch apply -i /specs/cluster.yml"
+      changed_when: true
+
+    - name: Wait until every Ceph disk is an up OSD
+      ansible.builtin.command: cephadm shell -- ceph osd stat -f json
+      register: osd_stat
+      changed_when: false
+      retries: 60
+      delay: 10
+      until: osd_stat.rc == 0 and (osd_stat.stdout | from_json).num_up_osds >= expected_osds | int
+
+    - name: Create pools and users, export ceph.conf and keyrings
+      ansible.builtin.command: "{{ shell }} bash /specs/pools.sh"
+      changed_when: true
+
+    - name: Copy ceph.conf and keyrings into Kolla's config
+      ansible.builtin.fetch:
+        src: "/etc/aleph0/ceph/out/{{ item.src }}"
+        dest: "{{ cluster_dir }}/config/{{ item.dest }}"
+        flat: true
+      loop:
+        - { src: ceph.conf, dest: glance/ceph.conf }
+        - { src: ceph.client.glance.keyring, dest: glance/ceph.client.glance.keyring }
+        - { src: ceph.conf, dest: cinder/ceph.conf }
+        - { src: ceph.client.cinder.keyring, dest: cinder/cinder-volume/ceph.client.cinder.keyring }
+        - { src: ceph.client.cinder.keyring, dest: cinder/cinder-backup/ceph.client.cinder.keyring }
+        - { src: ceph.client.cinder-backup.keyring, dest: cinder/cinder-backup/ceph.client.cinder-backup.keyring }
+        - { src: ceph.conf, dest: nova/ceph.conf }
+        - { src: ceph.client.cinder.keyring, dest: nova/ceph.client.cinder.keyring }
+
+    - name: Let Glance hand out copy-on-write clones
+      ansible.builtin.copy:
+        dest: "{{ cluster_dir }}/config/glance.conf"
+        mode: "0644"
+        content: |
+          [DEFAULT]
+          show_image_direct_url = True
+      delegate_to: localhost
+      become: false

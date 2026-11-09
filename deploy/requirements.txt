@@ -1,0 +1,4 @@
+# Deploy toolchain for deploy/infra.sh. Kolla-Ansible pins ansible-core (2.20–2.21).
+kolla-ansible @ git+https://opendev.org/openstack/kolla-ansible@stable/2026.2
+openstacksdk
+python-openstackclient
