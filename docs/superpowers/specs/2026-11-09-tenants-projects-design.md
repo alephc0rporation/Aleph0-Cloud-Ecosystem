@@ -49,7 +49,7 @@ PostgreSQL. This step brings goose (migrations embedded in the binary, run by `a
 |---|---|---|
 | `tenants` | `id` uuid (`uuidv7()`), `name` text, `created_by` text (Keycloak `sub`), `created_at` | |
 | `memberships` | `tenant_id`, `user_sub` text, `role` text (`owner` / `member`), `created_at` | PK (`tenant_id`, `user_sub`); FK to `tenants` |
-| `projects` | `id` uuid (`uuidv7()`), `tenant_id`, `name`, `openstack_project_id` text (null until created), `status` text, `error` text (null), `created_at` | Unique (`tenant_id`, `name`); FK to `tenants` |
+| `projects` | `id` uuid (`uuidv7()`), `tenant_id`, `name`, `openstack_project_id` text (null until created), `status` text, `created_at` | Unique (`tenant_id`, `name`); FK to `tenants` |
 
 Names are 1–64 characters after trimming; the OpenAPI spec enforces it.
 
@@ -81,7 +81,7 @@ One function per check, used by every handler: `memberOf(tenant, sub)` returns t
 
 ### Flows
 
-**Create a tenant**: one transaction inserts the tenant and the caller's `owner` membership, after checking the caller has created fewer than `LIMIT_TENANTS_PER_USER` tenants.
+**Create a tenant**: one transaction takes a lock per user (`pg_advisory_xact_lock(hashtext(sub))`, released at commit), checks the caller has created fewer than `LIMIT_TENANTS_PER_USER` tenants, and inserts the tenant and the caller's `owner` membership. Without the lock, parallel requests from one user would all pass the count and bypass the limit.
 
 **Create a project**:
 
@@ -90,7 +90,7 @@ One function per check, used by every handler: `memberOf(tenant, sub)` returns t
 3. For each region, as `aleph0-api` scoped to the new project: find or create network `default`, subnet `default` (`192.168.0.0/24`, like `dev-subnet`), router `default` with its gateway on the region's external network and an interface on the subnet.
 4. Set `ready`; return `201`.
 
-On an error in steps 2–3: set `failed` with the error text (logged, not returned), and return `502` (OpenStack answered with an error) or `503` (timeout or connection refused). The user deletes the failed project and creates it again. There is no retry endpoint.
+On an error in steps 2–3: set `failed`, log the error with the request ID, and return `502` (OpenStack answered with an error) or `503` (timeout or connection refused). The user deletes the failed project and creates it again. There is no retry endpoint.
 
 The whole create, and the whole delete below, run with a 25 s budget, under the server's 30 s write timeout.
 
@@ -98,7 +98,7 @@ The whole create, and the whole delete below, run with a 25 s budget, under the 
 
 1. Set `deleting`, from `ready`, `failed` or `deleting`. A project that is `provisioning` returns `409`, unless it has been `provisioning` for more than 5 minutes: then the API stopped in the middle of creating it, and it counts as `failed`. #4 refuses new VMs in a project that is not `ready`.
 2. In each region, count the project's servers; if any, put the previous status back and return `409`.
-3. Remove the router's interface, the router, the subnet and the network, then the Keystone project (as `aleph0-provisioner`). Anything already missing counts as removed.
+3. Remove the router's interface, the router, the subnet and the network, then the Keystone project (as `aleph0-provisioner`), found by its name (our project ID). Anything already missing counts as removed. When `openstack_project_id` is empty, creation stopped before any network existed, so steps 2–3 only look for the Keystone project: a timeout can leave one created in Keystone but never saved.
 4. Delete the row; return `204`.
 
 A failure in step 3 leaves the project `deleting`, and a new `DELETE` continues where it stopped. A VM created just before `deleting` makes the network removal fail (its port is still in use): nothing is lost, and the user deletes the VM and retries.
@@ -112,7 +112,7 @@ Gophercloud v2, behind a small interface that the handlers use and the tests fak
 ```go
 type Cloud interface {
     CreateProject(ctx, projectID, description string) (openstackProjectID string, err error)
-    DeleteProject(ctx, openstackProjectID string) error
+    DeleteProject(ctx, projectID string) error // finds the Keystone project by name
     EnsureDefaultNetwork(ctx, region, openstackProjectID string) error
     DeleteDefaultNetwork(ctx, region, openstackProjectID string) error
     CountServers(ctx, region, openstackProjectID string) (int, error)
