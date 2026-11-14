@@ -85,21 +85,3 @@ func (h *Handlers) DeleteTenant(ctx context.Context, req oapi.DeleteTenantReques
 func tenantJSON(t store.Tenant) oapi.Tenant {
 	return oapi.Tenant{Id: t.ID, Name: t.Name, Role: oapi.TenantRole(t.Role), CreatedAt: t.CreatedAt}
 }
-
-// Placeholders until Task 6 implements the project endpoints.
-
-func (h *Handlers) ListProjects(context.Context, oapi.ListProjectsRequestObject) (oapi.ListProjectsResponseObject, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (h *Handlers) CreateProject(context.Context, oapi.CreateProjectRequestObject) (oapi.CreateProjectResponseObject, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (h *Handlers) GetProject(context.Context, oapi.GetProjectRequestObject) (oapi.GetProjectResponseObject, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (h *Handlers) DeleteProject(context.Context, oapi.DeleteProjectRequestObject) (oapi.DeleteProjectResponseObject, error) {
-	return nil, errors.New("not implemented")
-}

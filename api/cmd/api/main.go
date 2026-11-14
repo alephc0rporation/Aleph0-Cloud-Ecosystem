@@ -9,12 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/alephc0rporation/Cardinal/api/internal/auth"
 	"github.com/alephc0rporation/Cardinal/api/internal/config"
 	"github.com/alephc0rporation/Cardinal/api/internal/handlers"
+	"github.com/alephc0rporation/Cardinal/api/internal/openstack"
 	"github.com/alephc0rporation/Cardinal/api/internal/server"
 	"github.com/alephc0rporation/Cardinal/api/internal/store"
 )
@@ -72,10 +74,12 @@ func serve() error {
 
 	verifier := auth.NewKeycloakVerifier(cfg.OIDCIssuer, cfg.OIDCAudience)
 	h := server.Handler(&handlers.Handlers{
-		Ping:    pool.Ping,
-		Tenants: store.NewTenants(pool),
-		Regions: cfg.Regions,
-		Limits:  handlers.Limits{TenantsPerUser: cfg.LimitTenantsPerUser, ProjectsPerTenant: cfg.LimitProjectsPerTenant},
+		Ping:     pool.Ping,
+		Tenants:  store.NewTenants(pool),
+		Projects: store.NewProjects(pool),
+		Cloud:    openstack.New(cfg, 10*time.Second),
+		Regions:  cfg.Regions,
+		Limits:   handlers.Limits{TenantsPerUser: cfg.LimitTenantsPerUser, ProjectsPerTenant: cfg.LimitProjectsPerTenant},
 	}, verifier.Middleware)
 
 	slog.Info("listening", "addr", cfg.HTTPAddr)
