@@ -14,7 +14,7 @@ Customers never talk to OpenStack directly: they only use our portal and our API
 | **Virtual networks** | Neutron with OVN | private networks, routers/NAT, floating IPs, security groups |
 | **Load balancer** | Octavia with the OVN provider | L4 only (TCP/UDP) at first; L7/HTTPS (amphora) later |
 
-Included by default: scheduled backups (snapshots), basic per-VM metrics, per-organization quotas.
+Included by default: scheduled backups (snapshots), basic per-VM metrics, per-tenant quotas.
 
 ---
 
@@ -48,10 +48,17 @@ Publicly exposed from our own infrastructure (only these):
 - **OpenStack is the source of truth** for resources. Our DB does not duplicate VMs or volumes.
 - **OpenStack APIs stay private**; the only client is the Go backend, over the VPN.
 - **Keycloak authenticates the platform only.** No Keystone federation.
-- The backend uses a **service user** in Keystone with the `member` role (not `admin`) on each project.
-  Each organization = one OpenStack project.
-- On every request: check organization → project in our DB, then a Keystone token
-  **scoped to that organization's project**.
+- **Tenants and projects.** A tenant is a customer account with members (`owner` or `member`); it
+  exists only in our DB. It holds projects, and each project is one OpenStack project in the
+  Keystone domain `customers`, tagged `tenant=<tenant id>`, with a `default` network, subnet and
+  router in every region. Resources (VMs, from #4) belong to a project and a region.
+- **Two service users, neither `admin`.** `aleph0-provisioner` has `manager` on the `customers`
+  domain: it creates and deletes the projects there and nothing else. `aleph0-api` has `member`
+  on the `customers` domain, inherited by every project in it (a domain manager cannot grant roles
+  to a user of another domain), and does everything else with a token scoped to one project.
+- On every request: the caller's membership in the project's tenant is checked in our DB (a
+  non-member gets 404, so nothing reveals that a tenant exists), and the OpenStack project comes
+  from our DB row, never from the request.
 - There is always a **local admin account in Keystone** (not federated) for emergencies.
 
 ### API
@@ -246,8 +253,9 @@ PostgreSQL, separate from OpenStack's MariaDB. Tables arrive with the issues tha
 
 | Table | Purpose |
 |---|---|
-| `organizations` | org ↔ Keycloak group ↔ OpenStack project (+ `stripe_customer_id` later) |
-| `memberships` | user ↔ organization ↔ role (admin / member) |
+| `tenants` | customer accounts: name, who created them (+ `stripe_customer_id` later) |
+| `memberships` | user (Keycloak `sub`) ↔ tenant ↔ role (`owner` / `member`) |
+| `projects` | tenant, name, OpenStack project ID, status (`provisioning` / `ready` / `failed` / `deleting`) |
 | `jobs` | async operations (provisioning, deletions) and their status |
 | `resource_events` | who, what, when: create / resize / delete. Basis for audit, analytics, billing |
 
@@ -257,7 +265,7 @@ PostgreSQL, separate from OpenStack's MariaDB. Tables arrive with the issues tha
 
 - Secrets only in `.env` / Secret Manager, never in git
 - Port 25 blocked by default for customer VMs (anti-spam)
-- Creation limits and quotas per organization
+- Creation limits and quotas per tenant (today: tenants per user, projects per tenant)
 - Monitoring of abnormal CPU usage (crypto mining)
 - Terms of service + GDPR before the first customers
 
@@ -279,8 +287,6 @@ Starts with 3 physical nodes, each with all four roles; more nodes are added to 
 
 Raised during planning, to be settled in the step that needs them.
 
-- **Creating projects:** a service user with only the `member` role cannot create OpenStack
-  projects. Onboarding a new organization needs a separate identity or a custom policy.
 - **VPN:** GCP Cloud VPN supports IPsec only (no WireGuard), and Cloud Run needs Direct VPC egress
   (or a connector) to reach the VPN.
 - **Production domain layout:** portal and API under one domain (no CORS) via the GCP load balancer,
