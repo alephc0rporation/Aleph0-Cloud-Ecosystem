@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -66,6 +67,42 @@ func TestLogsInAgainWhenTheTokenExpires(t *testing.T) {
 	if n != 1 || issued.Load() != 2 || rejected.Load() != 1 {
 		t.Fatalf("servers = %d, tokens issued = %d, rejected = %d; want 1, 2, 1", n, issued.Load(), rejected.Load())
 	}
+}
+
+// Many requests at once, for a few projects, share the client's caches; run with -race.
+func TestConcurrentCallsShareTheClient(t *testing.T) {
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v3/auth/tokens", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Subject-Token", "token")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintf(w, `{"token":{"expires_at":"2099-01-01T00:00:00.000000Z",
+			"user":{"id":"u-api","name":"aleph0-api","domain":{"id":"default","name":"Default"}},
+			"catalog":[{"type":"compute","id":"c1","name":"nova","endpoints":[
+				{"id":"e1","interface":"internal","region":"RegionOne","region_id":"RegionOne","url":"%s/compute"}]}]}}`, srv.URL)
+	})
+	mux.HandleFunc("GET /compute/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"version":{"id":"v2.1","status":"CURRENT","min_version":"2.1","version":"2.96"}}`)
+	})
+	mux.HandleFunc("GET /compute/servers/detail", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"servers":[]}`)
+	})
+	srv = httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := openstack.New(testConfig(srv.URL+"/v3"), 5*time.Second)
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Go(func() {
+			if _, err := c.CountServers(context.Background(), "ro-1", fmt.Sprintf("p%d", i%5)); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
 }
 
 func TestUnavailableWhenOpenStackDoesNotAnswer(t *testing.T) {

@@ -17,7 +17,7 @@ reset:
 
 .PHONY: test
 test: web/node_modules/.package-lock.json
-	cd api && go vet ./... && go test ./...
+	cd api && go vet ./... && go test -race ./...
 	cd web && npm run lint && npm run typecheck && npm test
 
 .PHONY: generate
@@ -37,7 +37,7 @@ migrate:
 # Tests against the compose Postgres and the dev cluster; each skips when its settings are missing.
 .PHONY: test-integration
 test-integration:
-	cd api && go test -tags integration -count=1 $(TEST_FLAGS) ./...
+	cd api && go test -race -tags integration -count=1 $(TEST_FLAGS) ./...
 
 # Reinstall when the lock file changes. npm writes this marker only after a successful
 # install, so a failed or interrupted one runs again.
