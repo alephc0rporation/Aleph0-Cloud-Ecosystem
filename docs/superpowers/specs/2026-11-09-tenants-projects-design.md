@@ -16,8 +16,8 @@ Customers organize their resources like in a public cloud. A **tenant** is a cus
 | Roles | `owner` and `member`, at tenant level only | Per-project roles can be added later without changing these |
 | Tenant in OpenStack | None: a tenant exists only in our DB | OpenStack never needs it; creating a tenant stays a fast DB write |
 | Project in OpenStack | One OpenStack project per project, in the Keystone domain `customers`, tagged `tenant=<tenant id>` | Separate quotas, networks and access per project; the tag lets admins list one tenant's projects (`openstack project list --tags tenant=<id>`). A domain per tenant was rejected: creating domains needs cloud admin, it adds no isolation between customers, and Keystone cannot move a project between domains later |
-| Creating OpenStack projects | User `aleph0-provisioner`, with the `manager` role on domain `customers` only | Keystone's domain manager can create projects in its domain and nothing else in the cloud; answers the "creating projects" open question in `architecture.md` |
-| Other OpenStack calls | User `aleph0-api` (role `member`), with a token scoped to one project | As `architecture.md` already says |
+| Creating OpenStack projects | User `aleph0-provisioner`, with the `manager` role on domain `customers` only; it creates and deletes projects and grants nothing | Keystone's domain manager can create projects in its domain and nothing else in the cloud; answers the "creating projects" open question in `architecture.md` |
+| Other OpenStack calls | User `aleph0-api` (domain `Default`), with the `member` role on domain `customers` **inherited** by every project in it, existing and future, and a token scoped to one project per call | Granted once by the cloud admin at install. Tested on 2026-11-14: a domain manager cannot grant roles to a user of another domain (403, by design of the persona), and moving `aleph0-api` into `customers` would let the provisioner manage it (reset its password, disable it). A policy override was rejected: it weakens the domain isolation the persona is built for |
 | Identity | No Keycloak–Keystone federation | Customers never reach OpenStack; access rules live in one place, our DB |
 | Network | Every project gets a network, subnet and router named `default` in every region, created with the project | A VM can be created right away; custom networks come later |
 | Regions | From API config; one today (`ro-1`) | A region is a cluster; one Keystone can serve several regions later, so a project can span them |
@@ -36,10 +36,10 @@ Customers organize their resources like in a public cloud. A **tenant** is a cus
 
 - Domain `customers`.
 - User `aleph0-provisioner` in domain `Default`, with a generated password saved to `deploy/kolla/dev/credentials/aleph0-provisioner` (the same pattern as `aleph0-api`), and the `manager` role on domain `customers`.
-- `aleph0-api` gets nothing new here; it gets the `member` role on each project as the project is created.
+- `aleph0-api`: the `member` role on domain `customers`, inherited to its projects (`openstack role add --user aleph0-api --user-domain Default --domain customers --inherited member`; the `openstack.cloud.role_assignment` module, 2.6.0, has no inherited option, so this one runs as a command). It keeps its `member` role on `dev`.
 - The `dev` project and its network stay, for manual OpenStack tests.
 
-**To verify first:** that Keystone 2026.2 lets a domain `manager` give a user from domain `Default` the `member` role on a project in `customers`. If it does not, both service users move into `customers`, or a small policy override allows that one grant.
+Verified on the dev cluster (2026-11-14): the provisioner creates and deletes projects in `customers` and cannot read domain `Default`; with the inherited grant, `aleph0-api` gets a token for a new project and creates a network in it, and cannot get one for the `admin` project.
 
 ## Data
 
@@ -90,7 +90,7 @@ Rules that keep both layers working:
 - The `tenant=` tag is a label for admins. Access decisions never read it.
 - A test calls every tenant and project route as a non-member and expects `404`, so a route added without the check fails (see Testing).
 
-Weak spot, accepted: `aleph0-api` is `member` on every customer project, and `aleph0-provisioner` could give itself the same, so either password opens all customer resources (not the `Default` domain, where the admin project and OpenStack's own service users live). This comes from not federating identities. Mitigations: OpenStack APIs reachable only from the backend (over the VPN in production), passwords in `.env` in dev and Secret Manager in production, and rotation by setting a new password and restarting the API.
+Weak spot, accepted: `aleph0-api` is `member` on every customer project (the inherited grant), and `aleph0-provisioner` could give itself the same (a domain manager can still assign `member` within its domain), so either password opens all customer resources (not the `Default` domain, where the admin project and OpenStack's own service users live). This comes from not federating identities. Mitigations: OpenStack APIs reachable only from the backend (over the VPN in production), passwords in `.env` in dev and Secret Manager in production, and rotation by setting a new password and restarting the API.
 
 ### Flows
 
@@ -99,7 +99,7 @@ Weak spot, accepted: `aleph0-api` is `member` on every customer project, and `al
 **Create a project**:
 
 1. Transaction: lock the tenant row (`SELECT … FOR UPDATE`), check the project count against `LIMIT_PROJECTS_PER_TENANT`, insert the project as `provisioning`. A duplicate name fails on the unique constraint → `409`.
-2. As `aleph0-provisioner`: find or create the Keystone project in `customers`, named after the project ID and tagged `tenant=<tenant id>`; give `aleph0-api` the `member` role on it; save `openstack_project_id`.
+2. As `aleph0-provisioner`: find or create the Keystone project in `customers`, named after the project ID and tagged `tenant=<tenant id>`; save `openstack_project_id`. `aleph0-api` is already `member` there through the inherited grant.
 3. For each region, as `aleph0-api` scoped to the new project: find or create network `default`, subnet `default` (`192.168.0.0/24`, like `dev-subnet`), router `default` with its gateway on the region's external network and an interface on the subnet.
 4. Set `ready`; return `201`.
 
@@ -124,7 +124,7 @@ Gophercloud v2, behind a small interface that the handlers use and the tests fak
 
 ```go
 type Cloud interface {
-    CreateProject(ctx, projectID, tenantID, description string) (openstackProjectID string, err error)
+    CreateProject(ctx, projectID, tenantID, description string) (openstackProjectID string, err error) // grants nothing
     DeleteProject(ctx, projectID string) error // finds the Keystone project by name
     EnsureDefaultNetwork(ctx, region, openstackProjectID string) error
     DeleteDefaultNetwork(ctx, region, openstackProjectID string) error
