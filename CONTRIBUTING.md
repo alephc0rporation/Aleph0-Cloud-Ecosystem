@@ -38,17 +38,17 @@ Example: `feat(api): cap request bodies at 1 MiB`
 
 - [ ] `make test` passes (Go vet and tests, ESLint, TypeScript check, Vitest).
 - [ ] New behaviour has tests; bug fixes have a test that fails without the fix.
-- [ ] If you changed `api/openapi.yaml`, you ran `make generate` and committed the result.
+- [ ] If you changed the API contract (`api/openapi/`), you ran `make generate` and committed the result.
 - [ ] Docs are updated (README, `docs/`) if setup, commands or behaviour changed.
 - [ ] No secrets, tokens or real customer data in code, tests or commits.
 
 ## Code guidelines
 
-- **The API contract comes first.** `api/openapi.yaml` is the source of truth. Change it, run
-  `make generate`, then implement the new method of `oapi.StrictServerInterface` in
-  `api/internal/handlers`.
-- **Never edit generated files by hand:** `api/internal/oapi/`, `web/src/api/gen/` and
-  `web/src/routeTree.gen.ts`.
+- **The API contract comes first.** `api/openapi/` (split by area) is the source of truth. Change
+  it, run `make generate` (it bundles it into `api/openapi.yaml`), then implement the new method
+  of `oapi.StrictServerInterface` in `api/internal/handlers`.
+- **Never edit generated files by hand:** `api/openapi.yaml`, `api/internal/oapi/`,
+  `api/internal/store/db/`, `web/src/api/gen/` and `web/src/routeTree.gen.ts`.
 - **Go:** code is formatted with `gofmt`; errors returned to clients use the RFC 9457
   problem format from `api/internal/problem`.
 - **TypeScript/React:** ESLint and `tsc` must be clean; use the generated TanStack Query hooks

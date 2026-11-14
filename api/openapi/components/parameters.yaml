@@ -1,0 +1,14 @@
+TenantId:
+  name: tenantId
+  in: path
+  required: true
+  schema:
+    type: string
+    format: uuid
+ProjectId:
+  name: projectId
+  in: path
+  required: true
+  schema:
+    type: string
+    format: uuid

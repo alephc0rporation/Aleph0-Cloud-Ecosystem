@@ -31,3 +31,8 @@ export async function apiFetch<T>(url: string, init: RequestInit = {}): Promise<
   }
   return (res.status === 204 ? undefined : await res.json()) as T
 }
+
+// The message to show for a failed request: the API's detail when it gave one.
+export function errorMessage(err: unknown): string {
+  return err instanceof ApiError ? err.message : 'Something went wrong. Try again.'
+}

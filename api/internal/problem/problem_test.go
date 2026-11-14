@@ -2,6 +2,7 @@ package problem_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -46,5 +47,13 @@ func TestWriteOmitsEmptyDetail(t *testing.T) {
 	}
 	if _, ok := got["detail"]; ok {
 		t.Fatalf("detail present: %v", got)
+	}
+}
+
+func TestErrorCarriesStatusAndDetail(t *testing.T) {
+	var err error = problem.New(http.StatusConflict, "delete the tenant's projects first")
+	var pe *problem.Error
+	if !errors.As(err, &pe) || pe.Status != http.StatusConflict || pe.Detail != "delete the tenant's projects first" {
+		t.Fatalf("got %#v", err)
 	}
 }

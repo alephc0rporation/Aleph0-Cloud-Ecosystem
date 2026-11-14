@@ -1,0 +1,70 @@
+# The API contract, split by area. `make generate` bundles it into ../openapi.yaml,
+# which the Go server, its request validation and the web client are generated from.
+openapi: 3.0.3
+info:
+  title: Aleph0 Cardinal API
+  version: 0.1.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+security:
+- bearerAuth: []
+servers:
+- url: /
+  description: The API is served under / on the portal's domain
+paths:
+  /healthz:
+    $ref: paths/health.yaml#/healthz
+  /v1/me:
+    $ref: paths/me.yaml#/me
+  /v1/regions:
+    $ref: paths/regions.yaml#/regions
+  /v1/tenants:
+    $ref: paths/tenants.yaml#/tenants
+  /v1/tenants/{tenantId}:
+    $ref: paths/tenants.yaml#/tenant
+  /v1/tenants/{tenantId}/projects:
+    $ref: paths/projects.yaml#/tenantProjects
+  /v1/projects/{projectId}:
+    $ref: paths/projects.yaml#/project
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Health:
+      $ref: components/schemas.yaml#/Health
+    User:
+      $ref: components/schemas.yaml#/User
+    Region:
+      $ref: components/schemas.yaml#/Region
+    NameInput:
+      $ref: components/schemas.yaml#/NameInput
+    Tenant:
+      $ref: components/schemas.yaml#/Tenant
+    Project:
+      $ref: components/schemas.yaml#/Project
+    Problem:
+      $ref: components/schemas.yaml#/Problem
+  parameters:
+    TenantId:
+      $ref: components/parameters.yaml#/TenantId
+    ProjectId:
+      $ref: components/parameters.yaml#/ProjectId
+  responses:
+    Unauthorized:
+      $ref: components/responses.yaml#/Unauthorized
+    BadRequest:
+      $ref: components/responses.yaml#/BadRequest
+    Forbidden:
+      $ref: components/responses.yaml#/Forbidden
+    NotFound:
+      $ref: components/responses.yaml#/NotFound
+    Conflict:
+      $ref: components/responses.yaml#/Conflict
+    BadGateway:
+      $ref: components/responses.yaml#/BadGateway
+    ServiceUnavailable:
+      $ref: components/responses.yaml#/ServiceUnavailable

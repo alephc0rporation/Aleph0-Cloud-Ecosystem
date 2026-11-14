@@ -1,0 +1,7 @@
+# Redocly CLI: `make generate` bundles the split contract, `make test` lints it.
+telemetry: off
+extends:
+  - recommended
+apis:
+  main:
+    root: openapi/openapi.yaml

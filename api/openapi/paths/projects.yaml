@@ -1,0 +1,82 @@
+tenantProjects:
+  parameters:
+  - $ref: ../components/parameters.yaml#/TenantId
+  get:
+    operationId: listProjects
+    summary: The tenant's projects
+    responses:
+      '200':
+        description: The projects.
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: ../components/schemas.yaml#/Project
+      '401':
+        $ref: ../components/responses.yaml#/Unauthorized
+      '404':
+        $ref: ../components/responses.yaml#/NotFound
+  post:
+    operationId: createProject
+    summary: Create a project with its OpenStack project and default network in every region
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas.yaml#/NameInput
+    responses:
+      '201':
+        description: The new project, ready.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas.yaml#/Project
+      '400':
+        $ref: ../components/responses.yaml#/BadRequest
+      '401':
+        $ref: ../components/responses.yaml#/Unauthorized
+      '403':
+        $ref: ../components/responses.yaml#/Forbidden
+      '404':
+        $ref: ../components/responses.yaml#/NotFound
+      '409':
+        $ref: ../components/responses.yaml#/Conflict
+      '502':
+        $ref: ../components/responses.yaml#/BadGateway
+      '503':
+        $ref: ../components/responses.yaml#/ServiceUnavailable
+project:
+  parameters:
+  - $ref: ../components/parameters.yaml#/ProjectId
+  get:
+    operationId: getProject
+    summary: One project of a tenant the caller is a member of
+    responses:
+      '200':
+        description: The project.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas.yaml#/Project
+      '401':
+        $ref: ../components/responses.yaml#/Unauthorized
+      '404':
+        $ref: ../components/responses.yaml#/NotFound
+  delete:
+    operationId: deleteProject
+    summary: Delete a project that has no VMs, with its network and OpenStack project
+    responses:
+      '204':
+        description: Deleted.
+      '401':
+        $ref: ../components/responses.yaml#/Unauthorized
+      '404':
+        $ref: ../components/responses.yaml#/NotFound
+      '409':
+        $ref: ../components/responses.yaml#/Conflict
+      '502':
+        $ref: ../components/responses.yaml#/BadGateway
+      '503':
+        $ref: ../components/responses.yaml#/ServiceUnavailable

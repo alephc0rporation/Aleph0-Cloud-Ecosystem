@@ -22,6 +22,7 @@ The Ansible/Kolla toolchain installs itself into `deploy/.venv` on first use.
 |---|---|
 | `make infra-apply [ENV=dev]` | Brings the cluster to what `deploy/nodes/$(ENV).yml` says: first bring-up, new nodes, new roles |
 | `make node-remove NODE=<name> [ENV=dev]` | Takes a compute and/or storage node out (drains Ceph, needs no servers left on it) |
+| `make infra-status` | A quick look: nodes answering, Ceph health, OpenStack services up; in dev also the VMs, networks and WSL memory. It changes nothing, and is not monitoring |
 | `make infra-stop` | Shuts the dev VMs down cleanly and frees most of their RAM (dev only) |
 | `make infra-start` | Boots them again, waits for Ceph, and repairs the OpenStack services a boot leaves broken (dev only) |
 | `make infra-reconfigure [TAGS=a,b]` | Applies `globals.yml` or Ceph key changes to the running cluster (`kolla-ansible reconfigure`) |
@@ -192,6 +193,18 @@ The APIs are on the VIP `10.10.0.10`. The backend's user is `aleph0-api` (`membe
 emergency admin (not federated), password `keystone_admin_password` in
 `deploy/kolla/dev/passwords.yml`. Floating IPs (10.30.0.100–199) answer from WSL.
 
+## Logging in to the nodes
+
+`make infra-apply` writes `deploy/kolla/<env>/ssh_config`, with each node's address, user and the
+cluster's own `known_hosts`. Include it once from `~/.ssh/config`:
+
+```
+Include ~/projects/Aleph0-Cloud-Ecosystem/deploy/kolla/dev/ssh_config
+```
+
+Then `ssh node1`. Host keys are checked like any SSH login; after `make infra-destroy` the new
+cluster starts with an empty `known_hosts`, so rebuilt nodes do not trip the check.
+
 ## Generated files
 
 `deploy/kolla/<env>/` holds, all gitignored (only `globals.yml` is committed):
@@ -201,6 +214,9 @@ emergency admin (not federated), password `keystone_admin_password` in
 - `admin-openrc*.sh` and `public-openrc*.sh`, written by Kolla's `post-deploy`
 - `cirros-*.img`, the downloaded CirrOS image
 - `apply.tfplan` and `remove-<node>.tfplan`, only while `infra-apply` or `node-remove` runs
+- `known_hosts`, the nodes' SSH host keys: learned on first contact, checked after that,
+  forgotten for a node `node-remove` takes out
+- `ssh_config`, for logging in to the nodes by name (below)
 
 Each node records its deployed roles in `/etc/aleph0/roles`. Terraform's state (one workspace
 per env) lives in `deploy/terraform/terraform.tfstate.d/`, outside `deploy/kolla/`.

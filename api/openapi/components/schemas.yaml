@@ -1,0 +1,113 @@
+Health:
+  type: object
+  required:
+  - status
+  properties:
+    status:
+      type: string
+      enum:
+      - ok
+      - unavailable
+User:
+  type: object
+  required:
+  - id
+  - email
+  - name
+  properties:
+    id:
+      type: string
+      description: Keycloak subject (the token's `sub` claim).
+    email:
+      type: string
+    name:
+      type: string
+Region:
+  type: object
+  required:
+  - id
+  - name
+  properties:
+    id:
+      type: string
+      example: ro-1
+    name:
+      type: string
+      example: Romania 1
+NameInput:
+  type: object
+  required:
+  - name
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: ^\S(.{0,62}\S)?$
+      description: 1–64 characters, without leading or trailing spaces.
+Tenant:
+  type: object
+  required:
+  - id
+  - name
+  - role
+  - createdAt
+  properties:
+    id:
+      type: string
+      format: uuid
+    name:
+      type: string
+    role:
+      type: string
+      enum:
+      - owner
+      - member
+      description: The caller's role in the tenant.
+    createdAt:
+      type: string
+      format: date-time
+Project:
+  type: object
+  required:
+  - id
+  - tenantId
+  - name
+  - status
+  - createdAt
+  properties:
+    id:
+      type: string
+      format: uuid
+    tenantId:
+      type: string
+      format: uuid
+    name:
+      type: string
+    status:
+      type: string
+      enum:
+      - provisioning
+      - ready
+      - failed
+      - deleting
+    createdAt:
+      type: string
+      format: date-time
+Problem:
+  description: RFC 9457 problem details.
+  type: object
+  required:
+  - type
+  - title
+  - status
+  properties:
+    type:
+      type: string
+      example: about:blank
+    title:
+      type: string
+    status:
+      type: integer
+    detail:
+      type: string

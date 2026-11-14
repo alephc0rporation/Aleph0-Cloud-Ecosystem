@@ -1,0 +1,18 @@
+healthz:
+  get:
+    operationId: getHealthz
+    summary: Liveness and database check
+    security: []
+    responses:
+      '200':
+        description: The API and its database are reachable.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas.yaml#/Health
+      '503':
+        description: The database is unreachable.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas.yaml#/Health

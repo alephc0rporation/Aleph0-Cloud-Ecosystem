@@ -1,0 +1,68 @@
+tenants:
+  get:
+    operationId: listTenants
+    summary: The caller's tenants, with the caller's role in each
+    responses:
+      '200':
+        description: The tenants the caller is a member of.
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: ../components/schemas.yaml#/Tenant
+      '401':
+        $ref: ../components/responses.yaml#/Unauthorized
+  post:
+    operationId: createTenant
+    summary: Create a tenant; the caller becomes its owner
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: ../components/schemas.yaml#/NameInput
+    responses:
+      '201':
+        description: The new tenant.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas.yaml#/Tenant
+      '400':
+        $ref: ../components/responses.yaml#/BadRequest
+      '401':
+        $ref: ../components/responses.yaml#/Unauthorized
+      '403':
+        $ref: ../components/responses.yaml#/Forbidden
+tenant:
+  parameters:
+  - $ref: ../components/parameters.yaml#/TenantId
+  get:
+    operationId: getTenant
+    summary: One tenant the caller is a member of
+    responses:
+      '200':
+        description: The tenant.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas.yaml#/Tenant
+      '401':
+        $ref: ../components/responses.yaml#/Unauthorized
+      '404':
+        $ref: ../components/responses.yaml#/NotFound
+  delete:
+    operationId: deleteTenant
+    summary: Delete a tenant that has no projects (owners only)
+    responses:
+      '204':
+        description: Deleted.
+      '401':
+        $ref: ../components/responses.yaml#/Unauthorized
+      '403':
+        $ref: ../components/responses.yaml#/Forbidden
+      '404':
+        $ref: ../components/responses.yaml#/NotFound
+      '409':
+        $ref: ../components/responses.yaml#/Conflict

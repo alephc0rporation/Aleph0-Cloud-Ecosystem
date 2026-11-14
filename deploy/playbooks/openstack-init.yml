@@ -6,6 +6,7 @@
     cirros_version: "0.6.3"
     cirros_file: "{{ cluster_dir }}/cirros-{{ cirros_version }}-x86_64-disk.img"
     api_password: "{{ lookup('ansible.builtin.password', cluster_dir ~ '/credentials/aleph0-api length=32 chars=ascii_letters,digits') }}"
+    provisioner_password: "{{ lookup('ansible.builtin.password', cluster_dir ~ '/credentials/aleph0-provisioner length=32 chars=ascii_letters,digits') }}"
   tasks:
     - name: External network for floating IPs
       openstack.cloud.network:
@@ -72,6 +73,39 @@
         user: aleph0-api
         role: member
         project: dev
+
+    - name: Domain for customer projects
+      openstack.cloud.identity_domain:
+        name: customers
+        description: One project per Aleph0 project, created by aleph0-provisioner
+
+    # Keystone's bootstrap creates it since the domain manager persona; kept so the grant below never fails.
+    - name: Manager role
+      openstack.cloud.identity_role:
+        name: manager
+
+    - name: Provisioning service user
+      openstack.cloud.identity_user:
+        name: aleph0-provisioner
+        password: "{{ provisioner_password }}"
+        domain: default
+        update_password: on_create
+
+    - name: The provisioner manages the customers domain
+      openstack.cloud.role_assignment:
+        user: aleph0-provisioner
+        user_domain: default
+        role: manager
+        domain: customers
+
+    # A domain manager cannot grant roles to a user of another domain, so the admin grants
+    # aleph0-api member on every project in customers, existing and future, once. The module
+    # has no inherited option; role add is idempotent.
+    - name: The backend service user is a member of every customers project
+      ansible.builtin.command: >-
+        openstack role add --user aleph0-api --user-domain Default
+        --domain customers --inherited member
+      changed_when: false
 
     - name: Dev private network
       openstack.cloud.network:
