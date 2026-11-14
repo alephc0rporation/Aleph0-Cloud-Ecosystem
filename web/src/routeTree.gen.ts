@@ -11,7 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TTenantIdRouteImport } from './routes/t.$tenantId'
+import { Route as TenantsNewRouteImport } from './routes/tenants.new'
 import { Route as TTenantIdIndexRouteImport } from './routes/t.$tenantId.index'
+import { Route as TTenantIdSettingsRouteImport } from './routes/t.$tenantId.settings'
 import { Route as TTenantIdProjectsIndexRouteImport } from './routes/t.$tenantId.projects.index'
 import { Route as TTenantIdProjectsProjectIdRouteImport } from './routes/t.$tenantId.projects.$projectId'
 
@@ -25,9 +27,19 @@ const TTenantIdRoute = TTenantIdRouteImport.update({
   path: '/t/$tenantId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TenantsNewRoute = TenantsNewRouteImport.update({
+  id: '/tenants/new',
+  path: '/tenants/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TTenantIdIndexRoute = TTenantIdIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => TTenantIdRoute,
+} as any)
+const TTenantIdSettingsRoute = TTenantIdSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => TTenantIdRoute,
 } as any)
 const TTenantIdProjectsIndexRoute = TTenantIdProjectsIndexRouteImport.update({
@@ -45,12 +57,16 @@ const TTenantIdProjectsProjectIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/t/$tenantId': typeof TTenantIdRouteWithChildren
+  '/tenants/new': typeof TenantsNewRoute
+  '/t/$tenantId/settings': typeof TTenantIdSettingsRoute
   '/t/$tenantId/': typeof TTenantIdIndexRoute
   '/t/$tenantId/projects/$projectId': typeof TTenantIdProjectsProjectIdRoute
   '/t/$tenantId/projects/': typeof TTenantIdProjectsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/tenants/new': typeof TenantsNewRoute
+  '/t/$tenantId/settings': typeof TTenantIdSettingsRoute
   '/t/$tenantId': typeof TTenantIdIndexRoute
   '/t/$tenantId/projects/$projectId': typeof TTenantIdProjectsProjectIdRoute
   '/t/$tenantId/projects': typeof TTenantIdProjectsIndexRoute
@@ -59,6 +75,8 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/t/$tenantId': typeof TTenantIdRouteWithChildren
+  '/tenants/new': typeof TenantsNewRoute
+  '/t/$tenantId/settings': typeof TTenantIdSettingsRoute
   '/t/$tenantId/': typeof TTenantIdIndexRoute
   '/t/$tenantId/projects/$projectId': typeof TTenantIdProjectsProjectIdRoute
   '/t/$tenantId/projects/': typeof TTenantIdProjectsIndexRoute
@@ -68,12 +86,16 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/t/$tenantId'
+    | '/tenants/new'
+    | '/t/$tenantId/settings'
     | '/t/$tenantId/'
     | '/t/$tenantId/projects/$projectId'
     | '/t/$tenantId/projects/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/tenants/new'
+    | '/t/$tenantId/settings'
     | '/t/$tenantId'
     | '/t/$tenantId/projects/$projectId'
     | '/t/$tenantId/projects'
@@ -81,6 +103,8 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/t/$tenantId'
+    | '/tenants/new'
+    | '/t/$tenantId/settings'
     | '/t/$tenantId/'
     | '/t/$tenantId/projects/$projectId'
     | '/t/$tenantId/projects/'
@@ -89,6 +113,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   TTenantIdRoute: typeof TTenantIdRouteWithChildren
+  TenantsNewRoute: typeof TenantsNewRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -107,11 +132,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TTenantIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tenants/new': {
+      id: '/tenants/new'
+      path: '/tenants/new'
+      fullPath: '/tenants/new'
+      preLoaderRoute: typeof TenantsNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/t/$tenantId/': {
       id: '/t/$tenantId/'
       path: '/'
       fullPath: '/t/$tenantId/'
       preLoaderRoute: typeof TTenantIdIndexRouteImport
+      parentRoute: typeof TTenantIdRoute
+    }
+    '/t/$tenantId/settings': {
+      id: '/t/$tenantId/settings'
+      path: '/settings'
+      fullPath: '/t/$tenantId/settings'
+      preLoaderRoute: typeof TTenantIdSettingsRouteImport
       parentRoute: typeof TTenantIdRoute
     }
     '/t/$tenantId/projects/': {
@@ -132,12 +171,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface TTenantIdRouteChildren {
+  TTenantIdSettingsRoute: typeof TTenantIdSettingsRoute
   TTenantIdIndexRoute: typeof TTenantIdIndexRoute
   TTenantIdProjectsProjectIdRoute: typeof TTenantIdProjectsProjectIdRoute
   TTenantIdProjectsIndexRoute: typeof TTenantIdProjectsIndexRoute
 }
 
 const TTenantIdRouteChildren: TTenantIdRouteChildren = {
+  TTenantIdSettingsRoute: TTenantIdSettingsRoute,
   TTenantIdIndexRoute: TTenantIdIndexRoute,
   TTenantIdProjectsProjectIdRoute: TTenantIdProjectsProjectIdRoute,
   TTenantIdProjectsIndexRoute: TTenantIdProjectsIndexRoute,
@@ -150,6 +191,7 @@ const TTenantIdRouteWithChildren = TTenantIdRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   TTenantIdRoute: TTenantIdRouteWithChildren,
+  TenantsNewRoute: TenantsNewRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

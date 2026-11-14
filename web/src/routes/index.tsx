@@ -1,64 +1,23 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { Navigate, createFileRoute } from '@tanstack/react-router'
 import { useAuth } from 'react-oidc-context'
-import { useGetMe } from '@/api/gen/api'
-import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { errorMessage } from '@/api/fetcher'
+import { useListTenants } from '@/api/gen/api'
+import { requireAuth } from '@/auth/require-auth'
 
-export const Route = createFileRoute('/')({
-  beforeLoad: async ({ context }) => {
-    if (!context.auth.isAuthenticated) await context.auth.signinRedirect()
-  },
-  component: Home,
-})
+export const Route = createFileRoute('/')({ beforeLoad: requireAuth, component: Home })
 
+// Opens the first tenant, or asks for one.
 function Home() {
   const auth = useAuth()
-  // The browser is already on its way to Keycloak.
-  if (!auth.isAuthenticated) return null
-
-  return (
-    <div className="flex min-h-svh items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Aleph0 Cardinal</CardTitle>
-          <CardDescription>Signed in</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Profile />
-        </CardContent>
-        <CardFooter>
-          <Button variant="outline" onClick={() => void auth.signoutRedirect()}>
-            Log out
-          </Button>
-        </CardFooter>
-      </Card>
-    </div>
-  )
-}
-
-function Profile() {
-  const me = useGetMe()
-  if (me.isPending) return <p className="text-muted-foreground">Loading…</p>
-  if (me.isError) {
+  const tenants = useListTenants({ query: { enabled: auth.isAuthenticated } })
+  if (!auth.isAuthenticated || tenants.isPending) return null
+  if (tenants.isError) {
     return (
-      <p role="alert" className="text-destructive">
-        Could not load your profile.
+      <p role="alert" className="p-4 text-destructive">
+        {errorMessage(tenants.error)}
       </p>
     )
   }
-  return (
-    <dl className="grid gap-1">
-      <dt className="text-sm text-muted-foreground">Name</dt>
-      <dd>{me.data.name}</dd>
-      <dt className="text-sm text-muted-foreground">Email</dt>
-      <dd>{me.data.email}</dd>
-    </dl>
-  )
+  if (tenants.data.length === 0) return <Navigate to="/tenants/new" />
+  return <Navigate to="/t/$tenantId/projects" params={{ tenantId: tenants.data[0].id }} />
 }
