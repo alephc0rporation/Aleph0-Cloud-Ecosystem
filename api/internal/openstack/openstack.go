@@ -21,11 +21,18 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/subnets"
 	"github.com/gophercloud/gophercloud/v2/pagination"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 
 	"github.com/alephc0rporation/Cardinal/api/internal/config"
 )
 
 const (
+	// A client per OpenStack project holds its token and service catalog (about 10-20 KB).
+	// The cache keeps the most recently used ones, and drops each one before its token's
+	// hour runs out; a project that is used again logs in again.
+	projectClientsMax = 1000
+	projectClientsTTL = 50 * time.Minute
+
 	customersDomain = "customers"
 	// Every project gets a network, subnet and router with this name in every region.
 	defaultName = "default"
@@ -54,9 +61,9 @@ type Client struct {
 	mu          sync.Mutex
 	provisioner *gophercloud.ProviderClient
 	domainID    string
-	// shortcut: one client per OpenStack project, never evicted; fine for hundreds of projects, revisit with many more.
-	projects map[string]*gophercloud.ProviderClient
-	extNets  map[string]string // region ID → external network ID
+	// The cache is safe for concurrent use on its own; mu does not guard it.
+	projectClients *expirable.LRU[string, *gophercloud.ProviderClient]
+	extNets        map[string]string // region ID → external network ID
 }
 
 var _ Cloud = (*Client)(nil)
@@ -64,13 +71,18 @@ var _ Cloud = (*Client)(nil)
 // New returns a client that logs in lazily, so the API starts while OpenStack is down.
 // timeout bounds every HTTP call to OpenStack.
 func New(cfg config.Config, timeout time.Duration) *Client {
+	return newClient(cfg, timeout, projectClientsMax, projectClientsTTL)
+}
+
+func newClient(cfg config.Config, timeout time.Duration, maxProjectClients int, projectClientTTL time.Duration) *Client {
 	regions := make(map[string]config.Region, len(cfg.Regions))
 	for _, r := range cfg.Regions {
 		regions[r.ID] = r
 	}
 	return &Client{
 		cfg: cfg, timeout: timeout, regions: regions,
-		projects: map[string]*gophercloud.ProviderClient{}, extNets: map[string]string{},
+		projectClients: expirable.NewLRU[string, *gophercloud.ProviderClient](maxProjectClients, nil, projectClientTTL),
+		extNets:        map[string]string{},
 	}
 }
 
@@ -141,22 +153,15 @@ func (c *Client) identity(ctx context.Context) (*gophercloud.ServiceClient, stri
 
 // projectClient returns aleph0-api's client scoped to one OpenStack project.
 func (c *Client) projectClient(ctx context.Context, openstackProjectID string) (*gophercloud.ProviderClient, error) {
-	c.mu.Lock()
-	p := c.projects[openstackProjectID]
-	c.mu.Unlock()
-	if p != nil {
+	if p, ok := c.projectClients.Get(openstackProjectID); ok {
 		return p, nil
 	}
 	p, err := c.login(ctx, c.cfg.OSAPIUsername, c.cfg.OSAPIPassword, &gophercloud.AuthScope{ProjectID: openstackProjectID})
 	if err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if existing := c.projects[openstackProjectID]; existing != nil {
-		return existing, nil
-	}
-	c.projects[openstackProjectID] = p
+	// Two requests for the same new project may both log in; the last one is kept, both work.
+	c.projectClients.Add(openstackProjectID, p)
 	return p, nil
 }
 
@@ -229,9 +234,7 @@ func (c *Client) DeleteProject(ctx context.Context, projectID string) error {
 	if err := projects.Delete(ctx, ic, osID).ExtractErr(); err != nil && !notFound(err) {
 		return err
 	}
-	c.mu.Lock()
-	delete(c.projects, osID)
-	c.mu.Unlock()
+	c.projectClients.Remove(osID)
 	return nil
 }
 

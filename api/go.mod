@@ -12,6 +12,8 @@ require (
 	github.com/getkin/kin-openapi v0.152.0
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/google/uuid v1.6.0
+	github.com/gophercloud/gophercloud/v2 v2.16.0
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/oapi-codegen/nethttp-middleware v1.3.1
 	github.com/pressly/goose/v3 v3.30.1
@@ -29,7 +31,6 @@ require (
 	github.com/go-openapi/jsonpointer v1.0.0 // indirect
 	github.com/go-sql-driver/mysql v1.10.1 // indirect
 	github.com/google/cel-go v0.28.0 // indirect
-	github.com/gophercloud/gophercloud/v2 v2.16.0 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

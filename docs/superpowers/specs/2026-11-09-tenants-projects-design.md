@@ -135,7 +135,7 @@ type Cloud interface {
 ```
 
 - Every call finds by name before creating and treats "not found" as done when deleting, so each one is safe to repeat.
-- Clients: one for `aleph0-provisioner` (domain-scoped) and one per OpenStack project for `aleph0-api` (project-scoped), cached in memory, with Gophercloud's re-authentication on, so a token expiring after an hour does not break calls. *shortcut: the per-project client cache only grows; fine for hundreds of projects, revisit with many more.*
+- Clients: one for `aleph0-provisioner` (domain-scoped) and one per OpenStack project for `aleph0-api` (project-scoped), with Gophercloud's re-authentication on, so a token expiring after an hour does not break calls. The per-project clients sit in a bounded LRU cache (1000 clients, each dropped 50 minutes after it is created, before its token's hour runs out): memory stays fixed however many projects exist, and a project used again logs in again.
 - Timeouts: 10 s per OpenStack call. Errors are classified as `unavailable` (timeout, connection refused → `503`) or `failed` (any other → `502`).
 - The external network ID per region is looked up by name once and cached.
 

@@ -69,11 +69,14 @@ func TestLogsInAgainWhenTheTokenExpires(t *testing.T) {
 	}
 }
 
-// Many requests at once, for a few projects, share the client's caches; run with -race.
-func TestConcurrentCallsShareTheClient(t *testing.T) {
+// fakeOpenStack is a Keystone and Nova that accept every token; logins counts the tokens issued.
+func fakeOpenStack(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var logins atomic.Int32
 	var srv *httptest.Server
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v3/auth/tokens", func(w http.ResponseWriter, r *http.Request) {
+		logins.Add(1)
 		w.Header().Set("X-Subject-Token", "token")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -91,8 +94,13 @@ func TestConcurrentCallsShareTheClient(t *testing.T) {
 		fmt.Fprint(w, `{"servers":[]}`)
 	})
 	srv = httptest.NewServer(mux)
-	defer srv.Close()
+	t.Cleanup(srv.Close)
+	return srv, &logins
+}
 
+// Many requests at once, for a few projects, share the client's caches; run with -race.
+func TestConcurrentCallsShareTheClient(t *testing.T) {
+	srv, _ := fakeOpenStack(t)
 	c := openstack.New(testConfig(srv.URL+"/v3"), 5*time.Second)
 	var wg sync.WaitGroup
 	for i := range 20 {
@@ -103,6 +111,42 @@ func TestConcurrentCallsShareTheClient(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// The project client cache stays bounded: past its size it drops the least recently used
+// client, and that project logs in again when it is used.
+func TestProjectClientsAreEvicted(t *testing.T) {
+	srv, logins := fakeOpenStack(t)
+	c := openstack.NewWithCache(testConfig(srv.URL+"/v3"), 5*time.Second, 2, time.Hour)
+	use := func(project string, wantLogins int32) {
+		t.Helper()
+		if _, err := c.CountServers(context.Background(), "ro-1", project); err != nil {
+			t.Fatal(err)
+		}
+		if got := logins.Load(); got != wantLogins {
+			t.Fatalf("after %s: %d logins, want %d", project, got, wantLogins)
+		}
+	}
+	use("p1", 1)
+	use("p2", 2)
+	use("p1", 2) // cached; p1 is now the most recently used
+	use("p3", 3) // the cache is full: p2, the least recently used, is dropped
+	use("p1", 3) // still cached
+	use("p2", 4) // dropped earlier: logs in again
+}
+
+func TestProjectClientsExpire(t *testing.T) {
+	srv, logins := fakeOpenStack(t)
+	c := openstack.NewWithCache(testConfig(srv.URL+"/v3"), 5*time.Second, 10, 50*time.Millisecond)
+	for range 2 {
+		if _, err := c.CountServers(context.Background(), "ro-1", "p1"); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if got := logins.Load(); got != 2 {
+		t.Fatalf("%d logins, want 2: the client should have expired between the calls", got)
+	}
 }
 
 func TestUnavailableWhenOpenStackDoesNotAnswer(t *testing.T) {
