@@ -12,6 +12,8 @@ if [[ $cmd != test && ! -f $nodes ]]; then echo "no such node file: deploy/$node
 mkdir -p "$cluster_dir" && chmod 700 "$cluster_dir"   # holds keyrings, passwords and credentials
 
 export PATH=$PWD/.venv/bin:$PATH
+# OS_* variables left in the shell (a manual check as another user) would override the admin cloud.
+unset $(compgen -v OS_)
 export OS_CLIENT_CONFIG_FILE=$cluster_dir/clouds.yaml OS_CLOUD=kolla-admin
 if [[ $env == dev ]]; then
   # Dev VMs are recreated with the same addresses, so their host keys change.
