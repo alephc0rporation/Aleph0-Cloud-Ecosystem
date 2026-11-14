@@ -49,7 +49,9 @@ PostgreSQL. This step brings goose (migrations embedded in the binary, run by `a
 |---|---|---|
 | `tenants` | `id` uuid (`gen_random_uuid()`), `name` text, `created_by` text (Keycloak `sub`), `created_at` | |
 | `memberships` | `tenant_id`, `user_sub` text, `role` text (`owner` / `member`), `created_at` | PK (`tenant_id`, `user_sub`); FK to `tenants` |
-| `projects` | `id` uuid (`gen_random_uuid()`), `tenant_id`, `name`, `openstack_project_id` text (null until created), `status` text, `created_at` | Unique (`tenant_id`, `name`); FK to `tenants` |
+| `projects` | `id` uuid (`gen_random_uuid()`), `tenant_id`, `name`, `openstack_project_id` text (null until created), `status` (enum `project_status`: `provisioning`, `ready`, `failed`, `deleting`), `created_at`, `updated_at` | Unique (`tenant_id`, `name`); FK to `tenants` |
+
+`status` is a Postgres enum, so sqlc generates a Go type for it; a new value is one `ALTER TYPE … ADD VALUE`, but a value cannot be removed without recreating the type. `updated_at` is set by the two `UPDATE` queries (status and OpenStack ID); `tenants` and `memberships` get one when their rows become editable (rename, role changes).
 
 Names are 1–64 characters without leading or trailing spaces; the OpenAPI spec enforces it, and the portal trims before sending.
 

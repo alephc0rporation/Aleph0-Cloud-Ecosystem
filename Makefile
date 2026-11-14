@@ -22,12 +22,22 @@ test: web/node_modules/.package-lock.json
 
 .PHONY: generate
 generate: web/node_modules/.package-lock.json
+	cd api && go tool sqlc generate
 	cd api && go tool oapi-codegen -config oapi-codegen.yaml openapi.yaml
 	cd web && npm run generate
 
 .PHONY: dev-api
 dev-api:
 	cd api && go run ./cmd/api serve
+
+.PHONY: migrate
+migrate:
+	cd api && go run ./cmd/api migrate
+
+# Tests against the compose Postgres and the dev cluster; each skips when its settings are missing.
+.PHONY: test-integration
+test-integration:
+	cd api && go test -tags integration -count=1 ./...
 
 # Reinstall when the lock file changes. npm writes this marker only after a successful
 # install, so a failed or interrupted one runs again.
@@ -40,7 +50,7 @@ dev-web: web/node_modules/.package-lock.json
 
 .PHONY: dev
 # Ctrl+C stops both.
-dev: web/node_modules/.package-lock.json
+dev: web/node_modules/.package-lock.json migrate
 	$(MAKE) -j2 dev-api dev-web
 
 # Deploy toolchain (WSL only). The marker is written last, so a failed install runs again.
