@@ -275,9 +275,9 @@ start() {
 status() {
   local line osds counts
   if [[ $env == dev ]] && has_vms; then
-    line=$(virsh list --all | awk '/ aleph0-/ { name = $2; sub(/^aleph0-/, "", name); state = $3; for (i = 4; i <= NF; i++) state = state " " $i; printf "%s%s %s", sep, name, state; sep = " · " }')
+    line=$(virsh list --all | awk '/ aleph0-/ { name = $2; sub(/^aleph0-/, "", name); state = $3; for (i = 4; i <= NF; i++) state = state " " $i; printf "%s%s %s", sep, name, state; sep = " | " }')
     printf '%-14s%s\n' "VMs" "${line:-none}"
-    line=$(virsh net-list --all | awk '/ aleph0-/ { printf "%s%s %s", sep, $1, $2; sep = " · " }')
+    line=$(virsh net-list --all | awk '/ aleph0-/ { printf "%s%s %s", sep, $1, $2; sep = " | " }')
     printf '%-14s%s\n' "Networks" "${line:-none}"
     printf '%-14s%s\n' "Memory (WSL)" "$(free -b | awk '/^Mem:/ { printf "%.1f GiB used of %.1f GiB, %.1f GiB available", $3 / 2^30, $2 / 2^30, $7 / 2^30 }')"
     if [[ -z $(aleph0_vms) ]]; then
@@ -287,12 +287,12 @@ status() {
   fi
 
   line=$(ansible 'all:!localhost' "${inv[@]}" -m ansible.builtin.ping -o -T 5 2>/dev/null | sort |
-    awk '{ printf "%s%s %s", sep, $1, ($3 == "SUCCESS" ? "ok" : "unreachable"); sep = " · " }') || true
+    awk '{ printf "%s%s %s", sep, $1, ($3 == "SUCCESS" ? "ok" : "unreachable"); sep = " | " }') || true
   printf '%-14s%s\n' "Nodes" "${line:-no answer}"
 
   if line=$(ceph_admin health 2>/dev/null | grep -Eom1 'HEALTH_(OK|WARN|ERR)') &&
     osds=$(ceph_admin osd stat 2>/dev/null | grep -m1 'osds:'); then
-    printf '%-14s%s · %s\n' "Ceph" "$line" "$(sed -E 's/ \(since [^)]*\)//g; s/;.*//' <<<"$osds")"
+    printf '%-14s%s | %s\n' "Ceph" "$line" "$(sed -E 's/ \(since [^)]*\)//g; s/;.*//' <<<"$osds")"
   else
     printf '%-14s%s\n' "Ceph" "no answer"
   fi
@@ -302,10 +302,10 @@ status() {
   elif ! openstack token issue -f value -c id >/dev/null 2>&1; then
     printf '%-14s%s\n' "OpenStack" "the API does not answer"
   else
-    counts=$(up_count "compute service list" State up)" compute up · "
-    counts+=$(up_count "network agent list" Alive True)" network agents alive · "
+    counts=$(up_count "compute service list" State up)" compute up | "
+    counts+=$(up_count "network agent list" Alive True)" network agents alive | "
     counts+=$(up_count "volume service list" State up)" volume up"
-    printf '%-14s%s\n' "OpenStack" "API answers · $counts"
+    printf '%-14s%s\n' "OpenStack" "API answers | $counts"
   fi
 }
 
