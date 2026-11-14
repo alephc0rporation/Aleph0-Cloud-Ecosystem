@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Builds and changes the OpenStack + Ceph cluster described by deploy/nodes/<env>.yml.
-# Usage: infra.sh apply|remove|destroy|stop|start|reconfigure|test <env> [node|tags]
+# Usage: infra.sh apply|remove|destroy|stop|start|status|reconfigure|test <env> [node|tags]
 set -euo pipefail
 cd "$(dirname "$0")"
 
-cmd=${1:?usage: infra.sh apply|remove|destroy|stop|start|reconfigure|test <env> [node|tags]}
+cmd=${1:?usage: infra.sh apply|remove|destroy|stop|start|status|reconfigure|test <env> [node|tags]}
 env=${2:-dev}
 nodes=nodes/$env.yml
 cluster_dir=$PWD/kolla/$env
@@ -270,6 +270,52 @@ start() {
 }
 
 # Each bad fixture must be rejected by its own rule: <fixture>:<text of that rule's message>.
+# A quick look at the cluster, the same checks in every environment; dev adds its VMs, networks
+# and WSL memory. It reports and never changes anything; it is not monitoring.
+status() {
+  local line osds counts
+  if [[ $env == dev ]] && has_vms; then
+    line=$(virsh list --all | awk '/ aleph0-/ { name = $2; sub(/^aleph0-/, "", name); state = $3; for (i = 4; i <= NF; i++) state = state " " $i; printf "%s%s %s", sep, name, state; sep = " · " }')
+    printf '%-14s%s\n' "VMs" "${line:-none}"
+    line=$(virsh net-list --all | awk '/ aleph0-/ { printf "%s%s %s", sep, $1, $2; sep = " · " }')
+    printf '%-14s%s\n' "Networks" "${line:-none}"
+    printf '%-14s%s\n' "Memory (WSL)" "$(free -b | awk '/^Mem:/ { printf "%.1f GiB used of %.1f GiB, %.1f GiB available", $3 / 2^30, $2 / 2^30, $7 / 2^30 }')"
+    if [[ -z $(aleph0_vms) ]]; then
+      echo "The VMs are off: make infra-start to check the cluster."
+      return
+    fi
+  fi
+
+  line=$(ansible 'all:!localhost' "${inv[@]}" -m ansible.builtin.ping -o -T 5 2>/dev/null | sort |
+    awk '{ printf "%s%s %s", sep, $1, ($3 == "SUCCESS" ? "ok" : "unreachable"); sep = " · " }') || true
+  printf '%-14s%s\n' "Nodes" "${line:-no answer}"
+
+  if line=$(ceph_admin health 2>/dev/null | grep -Eom1 'HEALTH_(OK|WARN|ERR)') &&
+    osds=$(ceph_admin osd stat 2>/dev/null | grep -m1 'osds:'); then
+    printf '%-14s%s · %s\n' "Ceph" "$line" "$(sed -E 's/ \(since [^)]*\)//g; s/;.*//' <<<"$osds")"
+  else
+    printf '%-14s%s\n' "Ceph" "no answer"
+  fi
+
+  if [[ ! -f $cluster_dir/clouds.yaml ]]; then
+    printf '%-14s%s\n' "OpenStack" "not deployed yet"
+  elif ! openstack token issue -f value -c id >/dev/null 2>&1; then
+    printf '%-14s%s\n' "OpenStack" "the API does not answer"
+  else
+    counts=$(up_count "compute service list" State up)" compute up · "
+    counts+=$(up_count "network agent list" Alive True)" network agents alive · "
+    counts+=$(up_count "volume service list" State up)" volume up"
+    printf '%-14s%s\n' "OpenStack" "API answers · $counts"
+  fi
+}
+
+# up_count LIST FIELD GOOD prints how many entries of `openstack LIST` have FIELD equal to GOOD, as "n/total".
+up_count() {
+  local out
+  out=$(openstack $1 -f value -c "$2" 2>/dev/null) || { echo "?"; return; }
+  echo "$(grep -cx "$3" <<<"$out")/$(grep -c . <<<"$out")"
+}
+
 run_tests() {
   ansible-playbook -i nodes/testdata/valid.yml -i nodes/roles.yml playbooks/validate.yml
   local t f msg out
@@ -326,6 +372,7 @@ case $cmd in
   destroy) destroy ;;
   stop) stop ;;
   start) start ;;
+  status) status ;;
   reconfigure) vms_up; ka reconfigure ${3:+--tags "$3"} ;;
   test) run_tests ;;
   *) echo "unknown command: $cmd" >&2; exit 2 ;;

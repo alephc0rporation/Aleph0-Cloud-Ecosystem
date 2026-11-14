@@ -22,6 +22,7 @@ The Ansible/Kolla toolchain installs itself into `deploy/.venv` on first use.
 |---|---|
 | `make infra-apply [ENV=dev]` | Brings the cluster to what `deploy/nodes/$(ENV).yml` says: first bring-up, new nodes, new roles |
 | `make node-remove NODE=<name> [ENV=dev]` | Takes a compute and/or storage node out (drains Ceph, needs no servers left on it) |
+| `make infra-status` | A quick look: nodes answering, Ceph health, OpenStack services up; in dev also the VMs, networks and WSL memory. It changes nothing, and is not monitoring |
 | `make infra-stop` | Shuts the dev VMs down cleanly and frees most of their RAM (dev only) |
 | `make infra-start` | Boots them again, waits for Ceph, and repairs the OpenStack services a boot leaves broken (dev only) |
 | `make infra-reconfigure [TAGS=a,b]` | Applies `globals.yml` or Ceph key changes to the running cluster (`kolla-ansible reconfigure`) |

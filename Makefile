@@ -80,6 +80,11 @@ infra-destroy:
 node-remove: deploy/.venv/.done
 	deploy/infra.sh remove $(ENV) $(NODE)
 
+# A quick look at the cluster (and, in dev, the VMs, networks and memory).
+.PHONY: infra-status
+infra-status: deploy/.venv/.done
+	deploy/infra.sh status $(ENV)
+
 # Free the dev VMs' RAM, and bring them back.
 .PHONY: infra-stop infra-start
 infra-stop: deploy/.venv/.done
