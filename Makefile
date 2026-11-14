@@ -37,7 +37,7 @@ migrate:
 # Tests against the compose Postgres and the dev cluster; each skips when its settings are missing.
 .PHONY: test-integration
 test-integration:
-	cd api && go test -tags integration -count=1 ./...
+	cd api && go test -tags integration -count=1 $(TEST_FLAGS) ./...
 
 # Reinstall when the lock file changes. npm writes this marker only after a successful
 # install, so a failed or interrupted one runs again.
