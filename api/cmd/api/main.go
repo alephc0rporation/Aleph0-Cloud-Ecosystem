@@ -71,7 +71,12 @@ func serve() error {
 	defer pool.Close()
 
 	verifier := auth.NewKeycloakVerifier(cfg.OIDCIssuer, cfg.OIDCAudience)
-	h := server.Handler(&handlers.Handlers{Ping: pool.Ping}, verifier.Middleware)
+	h := server.Handler(&handlers.Handlers{
+		Ping:    pool.Ping,
+		Tenants: store.NewTenants(pool),
+		Regions: cfg.Regions,
+		Limits:  handlers.Limits{TenantsPerUser: cfg.LimitTenantsPerUser, ProjectsPerTenant: cfg.LimitProjectsPerTenant},
+	}, verifier.Middleware)
 
 	slog.Info("listening", "addr", cfg.HTTPAddr)
 	return server.Run(ctx, cfg.HTTPAddr, h)

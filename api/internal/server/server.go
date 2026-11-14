@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -36,6 +37,11 @@ func Handler(api oapi.StrictServerInterface, requireAuth func(http.Handler) http
 		oapi.NewStrictHandlerWithOptions(api, nil, oapi.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc: badRequest,
 			ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+				var pe *problem.Error
+				if errors.As(err, &pe) {
+					problem.Write(w, pe.Status, pe.Detail)
+					return
+				}
 				slog.ErrorContext(r.Context(), "handler failed", "error", err)
 				problem.Write(w, http.StatusInternalServerError, "")
 			},

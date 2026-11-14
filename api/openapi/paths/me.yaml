@@ -1,0 +1,13 @@
+me:
+  get:
+    operationId: getMe
+    summary: The user the access token belongs to
+    responses:
+      '200':
+        description: The authenticated user.
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas.yaml#/User
+      '401':
+        $ref: ../components/responses.yaml#/Unauthorized

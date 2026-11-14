@@ -1,0 +1,46 @@
+Unauthorized:
+  description: Missing or invalid access token.
+  headers:
+    WWW-Authenticate:
+      schema:
+        type: string
+  content:
+    application/problem+json:
+      schema:
+        $ref: schemas.yaml#/Problem
+BadRequest:
+  description: The request does not match this specification.
+  content:
+    application/problem+json:
+      schema:
+        $ref: schemas.yaml#/Problem
+Forbidden:
+  description: A limit is reached, or the caller's role does not allow this.
+  content:
+    application/problem+json:
+      schema:
+        $ref: schemas.yaml#/Problem
+NotFound:
+  description: Not found, or the caller is not a member of the tenant.
+  content:
+    application/problem+json:
+      schema:
+        $ref: schemas.yaml#/Problem
+Conflict:
+  description: The current state does not allow this; `detail` says why.
+  content:
+    application/problem+json:
+      schema:
+        $ref: schemas.yaml#/Problem
+BadGateway:
+  description: OpenStack returned an error. The `X-Request-Id` header identifies the request in the API logs.
+  content:
+    application/problem+json:
+      schema:
+        $ref: schemas.yaml#/Problem
+ServiceUnavailable:
+  description: The region did not answer in time.
+  content:
+    application/problem+json:
+      schema:
+        $ref: schemas.yaml#/Problem

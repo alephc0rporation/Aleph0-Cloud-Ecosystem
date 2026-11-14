@@ -3,6 +3,7 @@ package problem
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -23,4 +24,16 @@ func Write(w http.ResponseWriter, status int, detail string) {
 		Status: status,
 		Detail: detail,
 	})
+}
+
+// Error is returned by a handler to answer with a problem response. Detail is shown to the client.
+type Error struct {
+	Status int
+	Detail string
+}
+
+func New(status int, detail string) *Error { return &Error{Status: status, Detail: detail} }
+
+func (e *Error) Error() string {
+	return fmt.Sprintf("%d %s: %s", e.Status, http.StatusText(e.Status), e.Detail)
 }
